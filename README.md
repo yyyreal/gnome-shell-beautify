@@ -14,7 +14,7 @@
 
 ## 支持版本
 
-GNOME Shell 45–51。扩展使用 GNOME 45 引入的 ES Modules API。
+GNOME Shell 46–51。扩展仅面向 GNOME 46 及以上版本。
 
 ## 安装
 
@@ -33,4 +33,3 @@ gnome-extensions enable gnome-beautify@yyyreal.github.com
 - Real April
 - GitHub: <https://github.com/yyyreal>
 - 邮箱：待提供
-
