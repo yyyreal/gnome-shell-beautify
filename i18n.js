@@ -2,6 +2,7 @@ import GLib from 'gi://GLib';
 
 const ENGLISH = new Map([
     ['活动', 'Activities'],
+    ['Dock 与应用程序栏背景', 'Dock & Application Bar Backgrounds'],
     ['通用', 'General'],
     ['应用程序栏', 'Application Bar'],
     ['高级', 'Advanced'],
@@ -41,6 +42,7 @@ const ENGLISH = new Map([
     ['渐变参数', 'Gradient Parameters'],
     ['模糊半径', 'Blur Radius'],
     ['透明度', 'Opacity'],
+    ['0% 为完全不透明，100% 为完全透明', '0% is fully opaque; 100% is fully transparent'],
     ['亮度', 'Brightness'],
     ['色调强度', 'Tint Strength'],
     ['背景颜色', 'Background Color'],

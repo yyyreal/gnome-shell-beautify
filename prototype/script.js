@@ -125,21 +125,29 @@ function updateParameter(key, rawValue, input) {
 function updatePreview() {
   const cfg = currentConfig();
   const preview = $('.preview-surface');
+  const backgroundAlpha = Math.max(0, 1 - cfg.opacity / 100);
   preview.className = `preview-surface ${cfg.effect}`;
   preview.style.borderRadius = `${cfg.corner}px`;
   preview.style.borderWidth = `${cfg.border}px`;
   preview.style.boxShadow = `0 14px 32px rgba(0,0,0,${cfg.shadow / 100})`;
-  preview.style.opacity = cfg.effect === 'original' ? 1 : Math.max(.12, cfg.opacity / 100);
+  preview.style.opacity = 1;
   preview.style.backdropFilter = '';
   preview.style.background = '';
-  if (cfg.effect === 'transparent') preview.style.background = 'rgba(36,31,46,.08)';
-  if (cfg.effect === 'blur') { preview.style.background = 'rgba(36,31,46,.62)'; preview.style.backdropFilter = `blur(${cfg.radius}px) brightness(${cfg.brightness / 100})`; }
-  if (cfg.effect === 'glass') { preview.style.background = `color-mix(in srgb, #8b70a8 ${cfg.tint}%, rgba(220,220,255,.26))`; preview.style.backdropFilter = `blur(${cfg.radius}px)`; }
-  if (cfg.effect === 'solid') preview.style.background = cfg.color;
-  if (cfg.effect === 'gradient') preview.style.background = `linear-gradient(${cfg.direction}deg, ${cfg.colorStart}, ${cfg.colorEnd})`;
+  if (cfg.effect === 'transparent') preview.style.background = `rgba(36,31,46,${backgroundAlpha})`;
+  if (cfg.effect === 'blur') { preview.style.background = `rgba(48,46,56,${backgroundAlpha})`; preview.style.backdropFilter = backgroundAlpha > 0 ? `blur(${cfg.radius}px) brightness(${cfg.brightness / 100})` : ''; }
+  if (cfg.effect === 'glass') { preview.style.background = `rgba(102,82,126,${backgroundAlpha})`; preview.style.backdropFilter = backgroundAlpha > 0 ? `blur(${cfg.radius}px) brightness(1)` : ''; preview.style.boxShadow = 'none'; }
+  if (cfg.effect === 'solid') preview.style.background = hexToRgba(cfg.color, backgroundAlpha);
+  if (cfg.effect === 'gradient') preview.style.background = `linear-gradient(${cfg.direction}deg, ${hexToRgba(cfg.colorStart, backgroundAlpha)}, ${hexToRgba(cfg.colorEnd, backgroundAlpha)})`;
   $('#desktopDock').style.borderRadius = `${Math.max(10,cfg.corner + 4)}px`;
-  $('#desktopDock').style.opacity = Math.max(.35,cfg.opacity / 100);
-  $('#desktopDock').style.backdropFilter = ['blur','glass'].includes(cfg.effect) ? `blur(${Math.min(cfg.radius,30)}px) brightness(${cfg.brightness / 100})` : '';
+  $('#desktopDock').style.opacity = 1;
+  $('#desktopDock').style.backgroundColor = `rgba(29,28,35,${backgroundAlpha})`;
+  $('#desktopDock').style.backdropFilter = ['blur','glass'].includes(cfg.effect) && backgroundAlpha > 0 ? `blur(${Math.min(cfg.radius,30)}px) brightness(${cfg.effect === 'glass' ? 1 : cfg.brightness / 100})` : '';
+}
+
+function hexToRgba(hex, alpha) {
+  const value = hex.replace('#', '');
+  const number = Number.parseInt(value, 16);
+  return `rgba(${number >> 16},${number >> 8 & 255},${number & 255},${alpha})`;
 }
 
 function scheduleApply() {
@@ -207,4 +215,3 @@ $('#resetCurrent').addEventListener('click', () => { const fresh = defaults()[st
 setLanguage();
 renderTargetContext();
 renderParameters();
-

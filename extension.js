@@ -41,6 +41,19 @@ export default class GnomeBeautifyExtension extends Extension {
             Main.overview.connect('hiding', () => this._beginOverviewAnimation()),
         ];
 
+        this._interfaceSettings = new Gio.Settings({
+            schema_id: 'org.gnome.desktop.interface',
+        });
+        this._interfaceSignalIds = [
+            this._interfaceSettings.connect('changed::color-scheme',
+                () => this._scheduleApply(true)),
+            this._interfaceSettings.connect('changed::gtk-theme',
+                () => this._scheduleApply(true)),
+        ];
+        this._themeContext = St.ThemeContext.get_for_stage(global.stage);
+        this._themeChangedId = this._themeContext.connect('changed',
+            () => this._scheduleApply(true));
+
         this._overviewAnimating = false;
         this._onBattery = false;
         this._setupPowerMonitor();
@@ -65,6 +78,15 @@ export default class GnomeBeautifyExtension extends Extension {
         for (const signalId of this._overviewSignalIds ?? [])
             Main.overview.disconnect(signalId);
         this._overviewSignalIds = null;
+
+        for (const signalId of this._interfaceSignalIds ?? [])
+            this._interfaceSettings.disconnect(signalId);
+        this._interfaceSignalIds = null;
+        this._interfaceSettings = null;
+        if (this._themeContext && this._themeChangedId)
+            this._themeContext.disconnect(this._themeChangedId);
+        this._themeChangedId = 0;
+        this._themeContext = null;
 
         if (this._powerProxy && this._powerChangedId)
             this._powerProxy.disconnect(this._powerChangedId);
@@ -255,7 +277,7 @@ export default class GnomeBeautifyExtension extends Extension {
 
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._quickOpacitySlider = this._createSliderItem(
-            _('强度'), 0, 100, 'dock-opacity', value => `${value}%`);
+            _('透明度'), 0, 100, 'dock-opacity', value => `${value}%`);
         menu.addMenuItem(this._quickOpacitySlider.item);
         this._quickRadiusSlider = this._createSliderItem(
             _('半径'), 0, 80, 'dock-blur-radius', value => `${value} px`);
@@ -359,6 +381,7 @@ export default class GnomeBeautifyExtension extends Extension {
         this._originalActors.set(target, {
             actor,
             style: actor.get_style(),
+            clipToAllocation: actor.clip_to_allocation,
         });
     }
 
@@ -368,65 +391,83 @@ export default class GnomeBeautifyExtension extends Extension {
         const original = this._originalActors.get(target);
         if (effect === 'original') {
             actor.set_style(original?.style ?? null);
+            actor.clip_to_allocation = original?.clipToAllocation ?? false;
             return;
         }
 
-        const opacity = this._settings.get_int(`${prefix}-opacity`) / 100;
+        const transparency = this._settings.get_int(`${prefix}-opacity`) / 100;
+        const backgroundAlpha = Math.max(0, 1 - transparency);
         const corner = this._settings.get_int(`${prefix}-corner-radius`);
         const border = this._settings.get_int(`${prefix}-border-width`);
         const shadow = this._settings.get_int(`${prefix}-shadow-strength`) / 100;
+        const isDark = this._isDarkTheme();
         const base = original?.style ? `${original.style};` : '';
         const details = [
             `border-radius: ${corner}px`,
         ];
+        actor.clip_to_allocation = effect === 'blur' || effect === 'glass';
 
         if (effect === 'transparent') {
-            const backgroundAlpha = Math.max(0, 1 - opacity);
+            const transparentColor = isDark ? '30,30,34' : '248,248,250';
             details.push(
-                `background-color: rgba(30,30,34,${backgroundAlpha.toFixed(2)})`,
+                `background-color: rgba(${transparentColor},${backgroundAlpha.toFixed(2)})`,
                 'border-width: 0px',
                 'border-color: rgba(0,0,0,0)',
                 'box-shadow: none');
         } else {
+            const borderColor = isDark ? '255,255,255' : '0,0,0';
             details.push(
                 `border-width: ${border}px`,
-                `border-color: rgba(255,255,255,${Math.min(0.34, opacity * 0.32).toFixed(2)})`,
-                `box-shadow: 0 6px 20px rgba(0,0,0,${shadow.toFixed(2)})`);
+                `border-color: rgba(${borderColor},${Math.min(0.34, backgroundAlpha * 0.32).toFixed(2)})`,
+                `box-shadow: 0 6px 20px rgba(0,0,0,${(shadow * backgroundAlpha).toFixed(2)})`);
         }
 
         if (effect === 'solid')
-            details.push(`background-color: ${this._rgba(this._settings.get_string(`${prefix}-color`), opacity)}`);
+            details.push(`background-color: ${this._rgba(this._settings.get_string(`${prefix}-color`), backgroundAlpha)}`);
         else if (effect === 'gradient') {
             const direction = this._settings.get_int(`${prefix}-gradient-direction`);
             const orientation = direction >= 45 && direction < 225 ? 'horizontal' : 'vertical';
             details.push(
                 `background-gradient-direction: ${orientation}`,
-                `background-gradient-start: ${this._rgba(this._settings.get_string(`${prefix}-gradient-start`), opacity)}`,
-                `background-gradient-end: ${this._rgba(this._settings.get_string(`${prefix}-gradient-end`), opacity)}`);
+                `background-gradient-start: ${this._rgba(this._settings.get_string(`${prefix}-gradient-start`), backgroundAlpha)}`,
+                `background-gradient-end: ${this._rgba(this._settings.get_string(`${prefix}-gradient-end`), backgroundAlpha)}`);
         } else if (effect === 'blur' || effect === 'glass') {
             const tint = effect === 'glass'
                 ? this._settings.get_int(`${prefix}-tint`) / 100
                 : 0;
-            const red = Math.round(38 + tint * 70);
-            const green = Math.round(34 + tint * 48);
-            const blue = Math.round(45 + tint * 92);
-            details.push(`background-color: rgba(${red},${green},${blue},${opacity.toFixed(2)})`);
-            if (effect === 'glass')
-                details.push('border-color: rgba(255,255,255,0.28)');
+            const neutral = isDark ? [48, 46, 56] : [238, 238, 244];
+            const glassTint = isDark ? [102, 82, 126] : [176, 158, 202];
+            const red = Math.round(neutral[0] * (1 - tint) + glassTint[0] * tint);
+            const green = Math.round(neutral[1] * (1 - tint) + glassTint[1] * tint);
+            const blue = Math.round(neutral[2] * (1 - tint) + glassTint[2] * tint);
+            details.push(`background-color: rgba(${red},${green},${blue},${backgroundAlpha.toFixed(2)})`);
+            if (effect === 'glass') {
+                const glassBorder = isDark
+                    ? `255,255,255,${(0.24 * backgroundAlpha).toFixed(2)}`
+                    : `0,0,0,${(0.16 * backgroundAlpha).toFixed(2)}`;
+                details.push(
+                    `border-color: rgba(${glassBorder})`,
+                    'box-shadow: none');
+            }
 
             let radius = this._settings.get_int(`${prefix}-blur-radius`);
-            let brightness = this._settings.get_int(`${prefix}-brightness`) / 100;
+            let brightness = effect === 'glass'
+                ? 1
+                : this._settings.get_int(`${prefix}-brightness`) / 100;
             if (this._overviewAnimating)
                 radius = Math.round(radius * 0.55);
             if (this._onBattery && this._settings.get_boolean('battery-reduce')) {
                 radius = Math.round(radius * 0.65);
-                brightness = Math.min(brightness, 0.92);
+                if (effect === 'blur')
+                    brightness = Math.min(brightness, 0.92);
             }
-            actor.add_effect_with_name(BLUR_EFFECT_NAME, new Shell.BlurEffect({
-                mode: Shell.BlurMode.BACKGROUND,
-                radius,
-                brightness,
-            }));
+            if (backgroundAlpha > 0.001) {
+                actor.add_effect_with_name(BLUR_EFFECT_NAME, new Shell.BlurEffect({
+                    mode: Shell.BlurMode.BACKGROUND,
+                    radius,
+                    brightness,
+                }));
+            }
         }
 
         actor.set_style(`${base}${details.join(';')};`);
@@ -443,6 +484,16 @@ export default class GnomeBeautifyExtension extends Extension {
         return `rgba(${red},${green},${blue},${alpha.toFixed(2)})`;
     }
 
+    _isDarkTheme() {
+        const scheme = this._interfaceSettings?.get_string('color-scheme') ?? '';
+        if (scheme.includes('dark'))
+            return true;
+        if (scheme.includes('light'))
+            return false;
+        const theme = this._interfaceSettings?.get_string('gtk-theme') ?? '';
+        return theme.toLowerCase().includes('dark');
+    }
+
     _removeBlur(actor) {
         const blur = actor.get_effect(BLUR_EFFECT_NAME);
         if (blur)
@@ -450,10 +501,11 @@ export default class GnomeBeautifyExtension extends Extension {
     }
 
     _restoreActors() {
-        for (const {actor, style} of this._originalActors?.values() ?? []) {
+        for (const {actor, style, clipToAllocation} of this._originalActors?.values() ?? []) {
             try {
                 this._removeBlur(actor);
                 actor.set_style(style ?? null);
+                actor.clip_to_allocation = clipToAllocation;
             } catch (error) {
                 console.debug(`${this.uuid}: actor already unavailable: ${error.message}`);
             }

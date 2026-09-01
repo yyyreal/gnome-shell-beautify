@@ -42,15 +42,19 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         this._statusSources = new Map();
         this._appControls = [];
 
-        window.set_default_size(940, 760);
-        window.search_enabled = true;
+        window.set_default_size(980, 760);
+        window.set_size_request(880, 620);
+        window.search_enabled = false;
         this._loadCss(window);
 
-        window.add(this._buildGeneralPage());
-        window.add(this._buildAppearancePage('dock'));
-        window.add(this._buildAppearancePage('app'));
-        window.add(this._buildAdvancedPage());
-        window.add(this._buildAboutPage());
+        const pages = [
+            ['general', _('通用'), 'preferences-system-symbolic', this._buildGeneralPage()],
+            ['dock', 'Dock', 'computer-symbolic', this._buildAppearancePage('dock')],
+            ['app', _('应用程序栏'), 'view-app-grid-symbolic', this._buildAppearancePage('app')],
+            ['advanced', _('高级'), 'applications-engineering-symbolic', this._buildAdvancedPage()],
+            ['about', _('关于'), 'help-about-symbolic', this._buildAboutPage()],
+        ];
+        window.set_content(this._buildWindowLayout(pages));
 
         this._linkedChangedId = this._settings.connect('changed::linked-targets',
             () => this._updateLinkedState());
@@ -70,6 +74,97 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             }
             return false;
         });
+    }
+
+    _buildWindowLayout(pages) {
+        const toolbar = new Adw.ToolbarView();
+        const header = new Adw.HeaderBar();
+        const titleBox = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 1,
+            valign: Gtk.Align.CENTER,
+        });
+        const title = new Gtk.Label({label: 'Gnome美化'});
+        title.add_css_class('title');
+        const subtitle = new Gtk.Label({label: this._('Dock 与应用程序栏背景')});
+        subtitle.add_css_class('subtitle');
+        titleBox.append(title);
+        titleBox.append(subtitle);
+        header.title_widget = titleBox;
+        toolbar.add_top_bar(header);
+
+        const layout = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            hexpand: true,
+            vexpand: true,
+        });
+        const sidebar = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            width_request: 205,
+            vexpand: true,
+        });
+        sidebar.add_css_class('settings-sidebar');
+        const navigation = new Gtk.ListBox({
+            selection_mode: Gtk.SelectionMode.SINGLE,
+            activate_on_single_click: true,
+            margin_top: 14,
+            margin_start: 10,
+            margin_end: 10,
+        });
+        navigation.add_css_class('navigation-sidebar');
+        sidebar.append(navigation);
+
+        const stack = new Gtk.Stack({
+            hexpand: true,
+            vexpand: true,
+            transition_type: Gtk.StackTransitionType.CROSSFADE,
+            transition_duration: 160,
+        });
+        let dockRow = null;
+        for (const [name, label, iconName, page] of pages) {
+            stack.add_named(page, name);
+            const row = new Gtk.ListBoxRow({
+                activatable: true,
+                selectable: true,
+            });
+            row._pageName = name;
+            row._pageTitle = label;
+            const content = new Gtk.Box({
+                spacing: 12,
+                margin_top: 10,
+                margin_bottom: 10,
+                margin_start: 12,
+                margin_end: 12,
+            });
+            content.append(new Gtk.Image({icon_name: iconName, pixel_size: 18}));
+            content.append(new Gtk.Label({label, xalign: 0}));
+            row.set_child(content);
+            navigation.append(row);
+            if (name === 'dock')
+                dockRow = row;
+        }
+        navigation.connect('row-selected', (_list, row) => {
+            if (!row)
+                return;
+            stack.visible_child_name = row._pageName;
+            subtitle.set_label(row._pageName === 'general'
+                ? this._('界面与行为')
+                : row._pageName === 'about'
+                    ? this._('关于')
+                    : `${row._pageTitle} · ${this._('背景效果')}`);
+        });
+        navigation.select_row(dockRow);
+        stack.visible_child_name = 'dock';
+
+        layout.append(sidebar);
+        const separator = new Gtk.Separator({orientation: Gtk.Orientation.VERTICAL});
+        layout.append(separator);
+        layout.append(stack);
+
+        this._toastOverlay = new Adw.ToastOverlay();
+        this._toastOverlay.set_child(layout);
+        toolbar.set_content(this._toastOverlay);
+        return toolbar;
     }
 
     _loadCss() {
@@ -208,7 +303,9 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
                 this._settings?.disconnect(effectChangedId);
         });
 
-        const parameterGroup = new Adw.PreferencesGroup();
+        const parameterGroup = new Adw.PreferencesGroup({
+            description: _('0% 为完全不透明，100% 为完全透明'),
+        });
         page.add(parameterGroup);
         const livePreview = this._buildLivePreview(prefix, currentEffect);
         parameterGroup.add(livePreview.container);
@@ -469,7 +566,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         page.add(heroGroup);
 
         const info = new Adw.PreferencesGroup();
-        info.add(this._infoRow(_('版本'), '1.0.1'));
+        info.add(this._infoRow(_('版本'), '1.0.2'));
         info.add(this._infoRow(_('作者'), 'Real April'));
         info.add(this._infoRow(_('邮箱'), _('待提供')));
         info.add(this._infoRow(_('本地化'), '中文 / English'));
@@ -726,6 +823,6 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
     }
 
     _toast(title) {
-        this._window.add_toast(new Adw.Toast({title}));
+        this._toastOverlay?.add_toast(new Adw.Toast({title}));
     }
 }
