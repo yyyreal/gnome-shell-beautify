@@ -566,14 +566,20 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         page.add(heroGroup);
 
         const info = new Adw.PreferencesGroup();
-        info.add(this._infoRow(_('版本'), '1.0.2'));
+        info.add(this._infoRow(_('版本'), '1.0.3'));
         info.add(this._infoRow(_('作者'), 'Real April'));
-        info.add(this._infoRow(_('邮箱'), _('待提供')));
+        const emailRow = new Adw.ActionRow({title: _('邮箱')});
+        emailRow.add_suffix(new Gtk.LinkButton({
+            label: 'c070533@qq.com ↗',
+            uri: 'mailto:c070533@qq.com',
+            valign: Gtk.Align.CENTER,
+        }));
+        info.add(emailRow);
         info.add(this._infoRow(_('本地化'), '中文 / English'));
         const githubRow = new Adw.ActionRow({title: _('项目主页')});
         githubRow.add_suffix(new Gtk.LinkButton({
-            label: 'github.com/yyyreal ↗',
-            uri: 'https://github.com/yyyreal',
+            label: 'github.com/yyyreal/gnome-beautify.git ↗',
+            uri: 'https://github.com/yyyreal/gnome-beautify.git',
             valign: Gtk.Align.CENTER,
         }));
         info.add(githubRow);

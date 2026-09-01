@@ -74,7 +74,6 @@ const ENGLISH = new Map([
     ['设置已恢复默认值', 'Settings restored to defaults'],
     ['作者', 'Author'],
     ['邮箱', 'Email'],
-    ['待提供', 'Not provided'],
     ['本地化', 'Localization'],
     ['版本', 'Version'],
     ['项目主页', 'Project Homepage'],
