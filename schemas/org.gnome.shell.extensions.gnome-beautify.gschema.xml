@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.gnome-beautify" path="/org/gnome/shell/extensions/gnome-beautify/">
+    <key name="linked-targets" type="b"><default>true</default><summary>Link Dock and application bar settings</summary></key>
+    <key name="show-indicator" type="b"><default>true</default><summary>Show the quick access icon in the application bar</summary></key>
+    <key name="apply-delay" type="i"><range min="500" max="5000"/><default>2000</default><summary>Delay before applying changes in milliseconds</summary></key>
+    <key name="language-mode" type="s"><choices><choice value="auto"/><choice value="zh"/><choice value="en"/></choices><default>'auto'</default><summary>Interface language</summary></key>
+    <key name="remember-last" type="b"><default>true</default><summary>Remember the last effect</summary></key>
+    <key name="performance-protection" type="b"><default>true</default><summary>Reduce blur during overview animations</summary></key>
+    <key name="battery-reduce" type="b"><default>true</default><summary>Reduce effects while running on battery</summary></key>
+
+    <key name="dock-effect" type="s"><choices><choice value="original"/><choice value="transparent"/><choice value="blur"/><choice value="glass"/><choice value="solid"/><choice value="gradient"/></choices><default>'blur'</default><summary>Dock background effect</summary></key>
+    <key name="dock-blur-radius" type="i"><range min="0" max="80"/><default>34</default><summary>Dock blur radius</summary></key>
+    <key name="dock-opacity" type="i"><range min="0" max="100"/><default>62</default><summary>Dock opacity</summary></key>
+    <key name="dock-brightness" type="i"><range min="40" max="120"/><default>92</default><summary>Dock blur brightness</summary></key>
+    <key name="dock-tint" type="i"><range min="0" max="100"/><default>18</default><summary>Dock glass tint strength</summary></key>
+    <key name="dock-color" type="s"><default>'#544d42'</default><summary>Dock solid color</summary></key>
+    <key name="dock-gradient-start" type="s"><default>'#5a416d'</default><summary>Dock gradient start color</summary></key>
+    <key name="dock-gradient-end" type="s"><default>'#8c425f'</default><summary>Dock gradient end color</summary></key>
+    <key name="dock-gradient-direction" type="i"><range min="0" max="360"/><default>100</default><summary>Dock gradient direction</summary></key>
+    <key name="dock-corner-radius" type="i"><range min="0" max="36"/><default>18</default><summary>Dock corner radius</summary></key>
+    <key name="dock-border-width" type="i"><range min="0" max="4"/><default>1</default><summary>Dock border width</summary></key>
+    <key name="dock-shadow-strength" type="i"><range min="0" max="100"/><default>20</default><summary>Dock shadow strength</summary></key>
+
+    <key name="app-effect" type="s"><choices><choice value="original"/><choice value="transparent"/><choice value="blur"/><choice value="glass"/><choice value="solid"/><choice value="gradient"/></choices><default>'blur'</default><summary>Application bar background effect</summary></key>
+    <key name="app-blur-radius" type="i"><range min="0" max="80"/><default>34</default><summary>Application bar blur radius</summary></key>
+    <key name="app-opacity" type="i"><range min="0" max="100"/><default>62</default><summary>Application bar opacity</summary></key>
+    <key name="app-brightness" type="i"><range min="40" max="120"/><default>92</default><summary>Application bar blur brightness</summary></key>
+    <key name="app-tint" type="i"><range min="0" max="100"/><default>18</default><summary>Application bar glass tint strength</summary></key>
+    <key name="app-color" type="s"><default>'#544d42'</default><summary>Application bar solid color</summary></key>
+    <key name="app-gradient-start" type="s"><default>'#5a416d'</default><summary>Application bar gradient start color</summary></key>
+    <key name="app-gradient-end" type="s"><default>'#8c425f'</default><summary>Application bar gradient end color</summary></key>
+    <key name="app-gradient-direction" type="i"><range min="0" max="360"/><default>100</default><summary>Application bar gradient direction</summary></key>
+    <key name="app-corner-radius" type="i"><range min="0" max="36"/><default>18</default><summary>Application bar corner radius</summary></key>
+    <key name="app-border-width" type="i"><range min="0" max="4"/><default>1</default><summary>Application bar border width</summary></key>
+    <key name="app-shadow-strength" type="i"><range min="0" max="100"/><default>20</default><summary>Application bar shadow strength</summary></key>
+  </schema>
+</schemalist>
+

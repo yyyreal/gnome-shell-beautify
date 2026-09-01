@@ -1,0 +1,570 @@
+import Adw from 'gi://Adw';
+import Gdk from 'gi://Gdk?version=4.0';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import Gtk from 'gi://Gtk?version=4.0';
+
+import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+
+import {getTranslator} from './i18n.js';
+
+const EFFECTS = [
+    ['original', '原始', 'document-properties-symbolic'],
+    ['transparent', '透明', 'edit-clear-all-symbolic'],
+    ['blur', '模糊', 'view-more-symbolic'],
+    ['glass', '磨砂玻璃', 'weather-clear-night-symbolic'],
+    ['solid', '纯色', 'color-select-symbolic'],
+    ['gradient', '渐变', 'applications-graphics-symbolic'],
+];
+
+const TARGET_SUFFIXES = [
+    'effect', 'blur-radius', 'opacity', 'brightness', 'tint', 'color',
+    'gradient-start', 'gradient-end', 'gradient-direction',
+    'corner-radius', 'border-width', 'shadow-strength',
+];
+
+const GLOBAL_KEYS = [
+    'linked-targets', 'show-indicator', 'apply-delay', 'language-mode',
+    'remember-last', 'performance-protection', 'battery-reduce',
+];
+
+const ALL_KEYS = [
+    ...GLOBAL_KEYS,
+    ...TARGET_SUFFIXES.map(key => `dock-${key}`),
+    ...TARGET_SUFFIXES.map(key => `app-${key}`),
+];
+
+export default class GnomeBeautifyPreferences extends ExtensionPreferences {
+    fillPreferencesWindow(window) {
+        this._window = window;
+        this._settings = this.getSettings();
+        this._ = getTranslator(this._settings);
+        this._statusSources = new Map();
+        this._appControls = [];
+
+        window.set_default_size(940, 760);
+        window.search_enabled = true;
+        this._loadCss(window);
+
+        window.add(this._buildGeneralPage());
+        window.add(this._buildAppearancePage('dock'));
+        window.add(this._buildAppearancePage('app'));
+        window.add(this._buildAdvancedPage());
+        window.add(this._buildAboutPage());
+
+        this._linkedChangedId = this._settings.connect('changed::linked-targets',
+            () => this._updateLinkedState());
+        this._updateLinkedState();
+
+        window.connect('close-request', () => {
+            for (const sourceId of this._statusSources.values())
+                GLib.Source.remove(sourceId);
+            this._statusSources.clear();
+            if (this._linkedChangedId)
+                this._settings.disconnect(this._linkedChangedId);
+            this._linkedChangedId = 0;
+            if (this._cssProvider) {
+                Gtk.StyleContext.remove_provider_for_display(
+                    Gdk.Display.get_default(), this._cssProvider);
+                this._cssProvider = null;
+            }
+            return false;
+        });
+    }
+
+    _loadCss() {
+        this._cssProvider = new Gtk.CssProvider();
+        this._cssProvider.load_from_path(`${this.path}/prefs.css`);
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            this._cssProvider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+
+    _buildGeneralPage() {
+        const _ = this._;
+        const page = new Adw.PreferencesPage({
+            title: _('通用'),
+            icon_name: 'preferences-system-symbolic',
+        });
+        const group = new Adw.PreferencesGroup({
+            title: _('界面与行为'),
+        });
+        page.add(group);
+
+        const languages = ['自动 / Automatic', '中文', 'English'];
+        const languageValues = ['auto', 'zh', 'en'];
+        const languageRow = new Adw.ComboRow({
+            title: _('界面语言'),
+            subtitle: _('自动选项会跟随系统语言；重新打开设置后生效'),
+            model: Gtk.StringList.new(languages),
+            selected: Math.max(0,
+                languageValues.indexOf(this._settings.get_string('language-mode'))),
+        });
+        languageRow.connect('notify::selected', row => {
+            this._settings.set_string('language-mode', languageValues[row.selected]);
+        });
+        group.add(languageRow);
+
+        const delays = [500, 1000, 2000, 3000, 5000];
+        const delayRow = new Adw.ComboRow({
+            title: _('调整延迟'),
+            subtitle: _('停止操作后再应用效果，避免连续重绘造成卡顿'),
+            model: Gtk.StringList.new(['0.5 s', '1 s', '2 s', '3 s', '5 s']),
+            selected: Math.max(0, delays.indexOf(this._settings.get_int('apply-delay'))),
+        });
+        delayRow.connect('notify::selected', row => {
+            this._settings.set_int('apply-delay', delays[row.selected]);
+        });
+        group.add(delayRow);
+
+        group.add(this._switchRow(
+            'remember-last', _('记住最后一次效果'), _('登录后恢复上次使用的配置')));
+        group.add(this._switchRow(
+            'show-indicator', _('显示应用程序栏快捷图标'), _('快速切换效果和打开设置')));
+        return page;
+    }
+
+    _buildAppearancePage(prefix) {
+        const _ = this._;
+        const isDock = prefix === 'dock';
+        const page = new Adw.PreferencesPage({
+            title: isDock ? 'Dock' : _('应用程序栏'),
+            icon_name: isDock ? 'computer-symbolic' : 'view-app-grid-symbolic',
+        });
+
+        if (isDock)
+            page.add(this._buildScopeGroup());
+
+        const statusRow = new Adw.ActionRow({
+            title: _('停止调整后自动应用'),
+            subtitle: `${this._settings.get_int('apply-delay') / 1000} s`,
+        });
+        statusRow.add_prefix(new Gtk.Image({icon_name: 'alarm-symbolic'}));
+
+        const effectGroup = new Adw.PreferencesGroup({
+            title: _('背景效果'),
+            description: _('选择此区域使用的背景样式'),
+        });
+        const effectBox = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 8,
+        });
+        effectBox.add_css_class('effect-grid');
+        const flow = new Gtk.FlowBox({
+            selection_mode: Gtk.SelectionMode.NONE,
+            homogeneous: true,
+            min_children_per_line: 3,
+            max_children_per_line: 6,
+            row_spacing: 8,
+            column_spacing: 8,
+        });
+        effectBox.append(flow);
+        effectGroup.add(effectBox);
+        page.add(effectGroup);
+
+        const currentEffect = this._settings.get_string(`${prefix}-effect`);
+        let firstButton = null;
+        const effectButtons = new Map();
+        for (const [value, label, iconName] of EFFECTS) {
+            const button = new Gtk.ToggleButton();
+            button.add_css_class('effect-tile');
+            if (firstButton)
+                button.set_group(firstButton);
+            else
+                firstButton = button;
+            const content = new Gtk.Box({
+                orientation: Gtk.Orientation.VERTICAL,
+                spacing: 7,
+                halign: Gtk.Align.CENTER,
+                valign: Gtk.Align.CENTER,
+            });
+            content.append(new Gtk.Image({icon_name: iconName, pixel_size: 30}));
+            content.append(new Gtk.Label({label: _(label)}));
+            button.set_child(content);
+            button.active = currentEffect === value;
+            button.connect('toggled', widget => {
+                if (!widget.active)
+                    return;
+                this._settings.set_string(`${prefix}-effect`, value);
+                this._updateParameterVisibility(prefix, value);
+                this._markPending(statusRow);
+            });
+            flow.append(button);
+            effectButtons.set(value, button);
+        }
+
+        const parameterGroup = new Adw.PreferencesGroup();
+        page.add(parameterGroup);
+        const rows = new Map();
+        rows.set('radius', this._scaleRow(prefix, 'blur-radius', _('模糊半径'), 0, 80, 1, 'px', statusRow));
+        rows.set('opacity', this._scaleRow(prefix, 'opacity', _('透明度'), 0, 100, 1, '%', statusRow));
+        rows.set('brightness', this._scaleRow(prefix, 'brightness', _('亮度'), 40, 120, 1, '%', statusRow));
+        rows.set('tint', this._scaleRow(prefix, 'tint', _('色调强度'), 0, 100, 1, '%', statusRow));
+        rows.set('color', this._colorRow(prefix, 'color', _('背景颜色'), statusRow));
+        rows.set('gradient-start', this._colorRow(prefix, 'gradient-start', _('起始颜色'), statusRow));
+        rows.set('gradient-end', this._colorRow(prefix, 'gradient-end', _('结束颜色'), statusRow));
+        rows.set('direction', this._scaleRow(prefix, 'gradient-direction', _('渐变方向'), 0, 360, 5, '°', statusRow));
+        for (const row of rows.values())
+            parameterGroup.add(row);
+
+        const warningRow = new Adw.ActionRow({
+            title: _('背景模糊可能增加 GPU 占用'),
+        });
+        warningRow.add_prefix(new Gtk.Image({icon_name: 'dialog-warning-symbolic'}));
+        warningRow.add_css_class('warning-text');
+        parameterGroup.add(warningRow);
+        parameterGroup.add(statusRow);
+
+        const detailGroup = new Adw.PreferencesGroup({title: _('外观细节')});
+        detailGroup.add(this._scaleRow(prefix, 'corner-radius', _('圆角'), 0, 36, 1, 'px', statusRow));
+        detailGroup.add(this._scaleRow(prefix, 'border-width', _('边框'), 0, 4, 1, 'px', statusRow));
+        detailGroup.add(this._scaleRow(prefix, 'shadow-strength', _('阴影'), 0, 100, 1, '%', statusRow));
+        page.add(detailGroup);
+
+        const resetGroup = new Adw.PreferencesGroup();
+        const resetRow = new Adw.ActionRow({
+            title: _('恢复默认'),
+            subtitle: isDock
+                ? _('设置 Dock 顶部系统栏的背景样式')
+                : _('设置概览中应用程序栏的背景样式'),
+        });
+        const resetButton = new Gtk.Button({
+            label: _('恢复默认'),
+            valign: Gtk.Align.CENTER,
+        });
+        resetButton.connect('clicked', () => {
+            for (const suffix of TARGET_SUFFIXES)
+                this._settings.reset(`${prefix}-${suffix}`);
+            this._toast(_('设置已恢复默认值'));
+        });
+        resetRow.add_suffix(resetButton);
+        resetGroup.add(resetRow);
+        page.add(resetGroup);
+
+        this[`_${prefix}Appearance`] = {
+            page,
+            groups: [effectGroup, parameterGroup, detailGroup, resetGroup],
+            parameterGroup,
+            rows,
+            warningRow,
+            effectButtons,
+        };
+        if (!isDock)
+            this._appControls.push(...this._appAppearance.groups);
+        this._updateParameterVisibility(prefix, currentEffect);
+        return page;
+    }
+
+    _buildScopeGroup() {
+        const _ = this._;
+        const group = new Adw.PreferencesGroup({title: _('应用范围')});
+        const linkRow = this._switchRow(
+            'linked-targets', _('联动 Dock 与应用程序栏'), _('关闭后可分别设置两处效果'));
+        linkRow.connect('notify::active', row => {
+            if (row.active)
+                this._copyDockToApplication();
+        });
+        group.add(linkRow);
+
+        const applicationRow = new Adw.ActionRow({
+            title: _('应用程序栏'),
+            subtitle: _('设置概览中应用程序栏的背景样式'),
+        });
+        applicationRow.add_prefix(new Gtk.Image({icon_name: 'view-app-grid-symbolic'}));
+        this._appLinkStatus = new Gtk.Label({valign: Gtk.Align.CENTER});
+        this._appLinkStatus.add_css_class('linked-status');
+        applicationRow.add_suffix(this._appLinkStatus);
+        group.add(applicationRow);
+
+        const dockRow = new Adw.ActionRow({
+            title: 'Dock',
+            subtitle: _('设置 Dock 顶部系统栏的背景样式'),
+        });
+        dockRow.add_prefix(new Gtk.Image({icon_name: 'computer-symbolic'}));
+        this._dockLinkStatus = new Gtk.Label({valign: Gtk.Align.CENTER});
+        this._dockLinkStatus.add_css_class('linked-status');
+        dockRow.add_suffix(this._dockLinkStatus);
+        group.add(dockRow);
+        return group;
+    }
+
+    _buildAdvancedPage() {
+        const _ = this._;
+        const page = new Adw.PreferencesPage({
+            title: _('高级'),
+            icon_name: 'applications-engineering-symbolic',
+        });
+        const performance = new Adw.PreferencesGroup({title: _('性能')});
+        performance.add(this._switchRow(
+            'performance-protection', _('性能保护'), _('概览动画期间临时降低模糊半径')));
+        performance.add(this._switchRow(
+            'battery-reduce', _('电池模式下降低效果'), _('使用电池时优先降低 GPU 占用')));
+        page.add(performance);
+
+        const presets = new Adw.PreferencesGroup({title: _('预设与恢复')});
+        presets.add(this._buttonRow(_('导出预设'), 'document-save-symbolic', () => this._exportPreset()));
+        presets.add(this._buttonRow(_('导入预设'), 'document-open-symbolic', () => this._importPreset()));
+        presets.add(this._buttonRow(_('恢复默认'), 'edit-undo-symbolic', () => {
+            for (const key of ALL_KEYS)
+                this._settings.reset(key);
+            this._toast(_('设置已恢复默认值'));
+        }, true));
+        page.add(presets);
+        return page;
+    }
+
+    _buildAboutPage() {
+        const _ = this._;
+        const page = new Adw.PreferencesPage({
+            title: _('关于'),
+            icon_name: 'help-about-symbolic',
+        });
+        const hero = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 10,
+            margin_top: 28,
+            margin_bottom: 18,
+            halign: Gtk.Align.CENTER,
+        });
+        const logo = Gtk.Image.new_from_file(`${this.path}/icons/gnome-beautify-symbolic.svg`);
+        logo.set_pixel_size(82);
+        logo.add_css_class('about-logo');
+        hero.append(logo);
+        const title = new Gtk.Label({label: 'Gnome美化'});
+        title.add_css_class('about-title');
+        hero.append(title);
+        const description = new Gtk.Label({
+            label: _('为 GNOME Shell 的 Dock 与应用程序栏提供独立或联动的透明、模糊、磨砂、纯色与渐变背景效果。'),
+            wrap: true,
+            justify: Gtk.Justification.CENTER,
+            max_width_chars: 62,
+        });
+        description.add_css_class('about-description');
+        hero.append(description);
+        const heroGroup = new Adw.PreferencesGroup();
+        heroGroup.add(hero);
+        page.add(heroGroup);
+
+        const info = new Adw.PreferencesGroup();
+        info.add(this._infoRow(_('版本'), '1.0.0'));
+        info.add(this._infoRow(_('作者'), 'Real April'));
+        info.add(this._infoRow(_('邮箱'), _('待提供')));
+        info.add(this._infoRow(_('本地化'), '中文 / English'));
+        const githubRow = new Adw.ActionRow({title: _('项目主页')});
+        githubRow.add_suffix(new Gtk.LinkButton({
+            label: 'github.com/yyyreal ↗',
+            uri: 'https://github.com/yyyreal',
+            valign: Gtk.Align.CENTER,
+        }));
+        info.add(githubRow);
+        page.add(info);
+        return page;
+    }
+
+    _switchRow(key, title, subtitle) {
+        const row = new Adw.SwitchRow({title, subtitle});
+        this._settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
+        return row;
+    }
+
+    _scaleRow(prefix, suffix, title, min, max, step, unit, statusRow) {
+        const key = `${prefix}-${suffix}`;
+        const row = new Adw.ActionRow({title});
+        const box = new Gtk.Box({
+            spacing: 10,
+            valign: Gtk.Align.CENTER,
+        });
+        const scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, min, max, step);
+        scale.add_css_class('parameter-scale');
+        scale.draw_value = false;
+        scale.hexpand = true;
+        scale.value = this._settings.get_int(key);
+        const output = new Gtk.Label({
+            label: `${this._settings.get_int(key)} ${unit}`.trim(),
+            width_chars: 6,
+            xalign: 1,
+        });
+        scale.connect('value-changed', widget => {
+            const value = Math.round(widget.value);
+            output.label = `${value} ${unit}`.trim();
+            this._settings.set_int(key, value);
+            this._markPending(statusRow);
+        });
+        box.append(scale);
+        box.append(output);
+        row.add_suffix(box);
+        row.activatable_widget = scale;
+        return row;
+    }
+
+    _colorRow(prefix, suffix, title, statusRow) {
+        const key = `${prefix}-${suffix}`;
+        const row = new Adw.ActionRow({title});
+        const rgba = new Gdk.RGBA();
+        rgba.parse(this._settings.get_string(key));
+        const button = new Gtk.ColorButton({
+            rgba,
+            use_alpha: false,
+            valign: Gtk.Align.CENTER,
+        });
+        button.connect('color-set', widget => {
+            const color = widget.rgba;
+            const hex = `#${this._channel(color.red)}${this._channel(color.green)}${this._channel(color.blue)}`;
+            this._settings.set_string(key, hex);
+            this._markPending(statusRow);
+        });
+        row.add_suffix(button);
+        row.activatable_widget = button;
+        return row;
+    }
+
+    _channel(value) {
+        return Math.round(value * 255).toString(16).padStart(2, '0');
+    }
+
+    _buttonRow(title, iconName, callback, destructive = false) {
+        const row = new Adw.ActionRow({title});
+        row.add_prefix(new Gtk.Image({icon_name: iconName}));
+        const button = new Gtk.Button({
+            label: title,
+            valign: Gtk.Align.CENTER,
+        });
+        if (destructive)
+            button.add_css_class('destructive-action');
+        button.connect('clicked', callback);
+        row.add_suffix(button);
+        row.activatable_widget = button;
+        return row;
+    }
+
+    _infoRow(title, value) {
+        const row = new Adw.ActionRow({title});
+        row.add_suffix(new Gtk.Label({label: value, valign: Gtk.Align.CENTER}));
+        return row;
+    }
+
+    _updateParameterVisibility(prefix, effect) {
+        const state = this[`_${prefix}Appearance`];
+        if (!state)
+            return;
+        const visible = {
+            radius: effect === 'blur' || effect === 'glass',
+            opacity: effect !== 'original',
+            brightness: effect === 'blur',
+            tint: effect === 'glass',
+            color: effect === 'solid',
+            'gradient-start': effect === 'gradient',
+            'gradient-end': effect === 'gradient',
+            direction: effect === 'gradient',
+        };
+        for (const [name, row] of state.rows)
+            row.visible = visible[name];
+        state.warningRow.visible = effect === 'blur' || effect === 'glass';
+        const titles = {
+            original: '背景效果', transparent: '透明参数', blur: '模糊参数',
+            glass: '磨砂玻璃参数', solid: '纯色参数', gradient: '渐变参数',
+        };
+        state.parameterGroup.title = this._(titles[effect]);
+    }
+
+    _updateLinkedState() {
+        const linked = this._settings.get_boolean('linked-targets');
+        for (const control of this._appControls)
+            control.sensitive = !linked;
+        const status = linked ? this._('已联动') : this._('独立设置');
+        if (this._appLinkStatus)
+            this._appLinkStatus.label = status;
+        if (this._dockLinkStatus)
+            this._dockLinkStatus.label = status;
+    }
+
+    _copyDockToApplication() {
+        for (const suffix of TARGET_SUFFIXES) {
+            const source = this._settings.get_value(`dock-${suffix}`);
+            this._settings.set_value(`app-${suffix}`, source);
+        }
+    }
+
+    _markPending(statusRow) {
+        if (!statusRow)
+            return;
+        const existing = this._statusSources.get(statusRow);
+        if (existing)
+            GLib.Source.remove(existing);
+        statusRow.subtitle = this._('等待停止调整…');
+        const delay = this._settings.get_int('apply-delay');
+        const sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
+            statusRow.subtitle = this._('设置已保存');
+            this._statusSources.delete(statusRow);
+            return GLib.SOURCE_REMOVE;
+        });
+        this._statusSources.set(statusRow, sourceId);
+    }
+
+    _exportPreset() {
+        const dialog = new Gtk.FileDialog({
+            title: this._('导出预设'),
+            initial_name: 'gnome-beautify-preset.json',
+        });
+        dialog.save(this._window, null, (source, result) => {
+            try {
+                const file = source.save_finish(result);
+                const values = {};
+                for (const key of ALL_KEYS)
+                    values[key] = this._settings.get_value(key).deepUnpack();
+                const data = new TextEncoder().encode(JSON.stringify({
+                    format: 'gnome-beautify-preset',
+                    version: 1,
+                    values,
+                }, null, 2));
+                file.replace_contents(data, null, false,
+                    Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+                this._toast(this._('预设已导出'));
+            } catch (error) {
+                if (!error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    console.error(error);
+            }
+        });
+    }
+
+    _importPreset() {
+        const dialog = new Gtk.FileDialog({title: this._('导入预设')});
+        const filter = new Gtk.FileFilter();
+        filter.name = 'JSON';
+        filter.add_mime_type('application/json');
+        const filters = Gio.ListStore.new(Gtk.FileFilter);
+        filters.append(filter);
+        dialog.filters = filters;
+        dialog.open(this._window, null, (source, result) => {
+            try {
+                const file = source.open_finish(result);
+                const [, contents] = file.load_contents(null);
+                const preset = JSON.parse(new TextDecoder().decode(contents));
+                if (preset.format !== 'gnome-beautify-preset' || !preset.values)
+                    throw new Error('Invalid preset');
+                for (const key of ALL_KEYS) {
+                    if (!(key in preset.values))
+                        continue;
+                    const type = this._settings.get_value(key).get_type_string();
+                    if (type === 'b')
+                        this._settings.set_boolean(key, Boolean(preset.values[key]));
+                    else if (type === 'i')
+                        this._settings.set_int(key, Number(preset.values[key]));
+                    else if (type === 's')
+                        this._settings.set_string(key, String(preset.values[key]));
+                }
+                this._toast(this._('预设已导入'));
+            } catch (error) {
+                if (!error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) {
+                    console.error(error);
+                    this._toast(this._('无法读取该预设文件'));
+                }
+            }
+        });
+    }
+
+    _toast(title) {
+        this._window.add_toast(new Adw.Toast({title}));
+    }
+}

@@ -1,0 +1,93 @@
+import GLib from 'gi://GLib';
+
+const ENGLISH = new Map([
+    ['活动', 'Activities'],
+    ['通用', 'General'],
+    ['应用程序栏', 'Application Bar'],
+    ['高级', 'Advanced'],
+    ['关于', 'About'],
+    ['原始', 'Original'],
+    ['透明', 'Transparent'],
+    ['模糊', 'Blur'],
+    ['磨砂玻璃', 'Frosted Glass'],
+    ['纯色', 'Solid Color'],
+    ['渐变', 'Gradient'],
+    ['强度', 'Intensity'],
+    ['半径', 'Radius'],
+    ['打开设置', 'Open Settings'],
+    ['快速效果', 'Quick Effect'],
+    ['同时应用到 Dock 与应用程序栏', 'Apply to both Dock and Application Bar'],
+    ['界面与行为', 'Interface & Behavior'],
+    ['界面语言', 'Interface Language'],
+    ['自动选项会跟随系统语言；重新打开设置后生效', 'Automatic follows the system language; reopen settings to apply'],
+    ['调整延迟', 'Apply Delay'],
+    ['停止操作后再应用效果，避免连续重绘造成卡顿', 'Apply after adjustments stop to avoid continuous redraws'],
+    ['记住最后一次效果', 'Remember Last Effect'],
+    ['登录后恢复上次使用的配置', 'Restore the last configuration after login'],
+    ['显示应用程序栏快捷图标', 'Show Application Bar Quick Icon'],
+    ['快速切换效果和打开设置', 'Switch effects and open settings quickly'],
+    ['应用范围', 'Apply To'],
+    ['联动 Dock 与应用程序栏', 'Link Dock and Application Bar'],
+    ['关闭后可分别设置两处效果', 'Turn off to configure each surface separately'],
+    ['已联动', 'Linked'],
+    ['独立设置', 'Independent'],
+    ['背景效果', 'Background Effect'],
+    ['选择此区域使用的背景样式', 'Choose the background style for this surface'],
+    ['模糊参数', 'Blur Parameters'],
+    ['磨砂玻璃参数', 'Frosted Glass Parameters'],
+    ['透明参数', 'Transparency Parameters'],
+    ['纯色参数', 'Solid Color Parameters'],
+    ['渐变参数', 'Gradient Parameters'],
+    ['模糊半径', 'Blur Radius'],
+    ['透明度', 'Opacity'],
+    ['亮度', 'Brightness'],
+    ['色调强度', 'Tint Strength'],
+    ['背景颜色', 'Background Color'],
+    ['起始颜色', 'Start Color'],
+    ['结束颜色', 'End Color'],
+    ['渐变方向', 'Gradient Direction'],
+    ['停止调整后自动应用', 'Apply Automatically After Adjustments Stop'],
+    ['等待停止调整…', 'Waiting for adjustments to stop…'],
+    ['设置已保存', 'Settings saved'],
+    ['背景模糊可能增加 GPU 占用', 'Background blur may increase GPU usage'],
+    ['外观细节', 'Appearance Details'],
+    ['圆角', 'Corner Radius'],
+    ['边框', 'Border'],
+    ['阴影', 'Shadow'],
+    ['设置 Dock 顶部系统栏的背景样式', 'Style the Dock top system bar background'],
+    ['设置概览中应用程序栏的背景样式', 'Style the application bar in the overview'],
+    ['性能', 'Performance'],
+    ['性能保护', 'Performance Protection'],
+    ['概览动画期间临时降低模糊半径', 'Temporarily reduce blur during overview animations'],
+    ['电池模式下降低效果', 'Reduce Effects on Battery'],
+    ['使用电池时优先降低 GPU 占用', 'Prefer lower GPU usage while on battery power'],
+    ['预设与恢复', 'Presets & Reset'],
+    ['导出预设', 'Export Preset'],
+    ['导入预设', 'Import Preset'],
+    ['恢复默认', 'Reset Defaults'],
+    ['预设已导出', 'Preset exported'],
+    ['预设已导入', 'Preset imported'],
+    ['无法读取该预设文件', 'Could not read the preset file'],
+    ['设置已恢复默认值', 'Settings restored to defaults'],
+    ['作者', 'Author'],
+    ['邮箱', 'Email'],
+    ['待提供', 'Not provided'],
+    ['本地化', 'Localization'],
+    ['版本', 'Version'],
+    ['项目主页', 'Project Homepage'],
+    ['为 GNOME Shell 的 Dock 与应用程序栏提供独立或联动的透明、模糊、磨砂、纯色与渐变背景效果。', 'Independent or linked transparent, blurred, frosted, solid, and gradient backgrounds for the GNOME Shell Dock and Application Bar.'],
+]);
+
+export function getLanguage(settings) {
+    const selected = settings?.get_string('language-mode') ?? 'auto';
+    if (selected === 'zh' || selected === 'en')
+        return selected;
+
+    return GLib.get_language_names().some(language =>
+        language.toLowerCase().startsWith('zh')) ? 'zh' : 'en';
+}
+
+export function getTranslator(settings) {
+    const language = getLanguage(settings);
+    return text => language === 'en' ? (ENGLISH.get(text) ?? text) : text;
+}

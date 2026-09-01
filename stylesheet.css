@@ -1,0 +1,42 @@
+.gnome-beautify-dash-button {
+    padding: 6px;
+    margin: 0 2px;
+    border-radius: 13px;
+    color: white;
+    background-color: rgba(91, 74, 151, 0.92);
+    box-shadow: inset 0 1px rgba(255, 255, 255, 0.20), 0 4px 10px rgba(0, 0, 0, 0.28);
+}
+
+.gnome-beautify-dash-button:hover,
+.gnome-beautify-dash-button:focus,
+.gnome-beautify-dash-button:active {
+    background-color: rgba(73, 123, 206, 0.96);
+}
+
+.gnome-beautify-menu-title {
+    font-weight: 700;
+    font-size: 1.05em;
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+.gnome-beautify-menu-caption {
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 0.86em;
+    padding-bottom: 5px;
+}
+
+.gnome-beautify-slider-box {
+    spacing: 7px;
+    min-width: 230px;
+}
+
+.gnome-beautify-slider-heading {
+    spacing: 12px;
+}
+
+.gnome-beautify-slider-value {
+    color: rgba(255, 255, 255, 0.72);
+    font-feature-settings: "tnum";
+}
+
