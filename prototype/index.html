@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Gnome美化：Dock 与应用程序栏背景效果交互原型">
+  <title>Gnome美化 · HTML Prototype</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="desktop" aria-label="GNOME desktop prototype">
+    <header class="topbar">
+      <button class="activity-button" type="button" data-i18n="activities">活动</button>
+      <time>9月1日&nbsp; 14:32</time>
+      <div class="system-status" aria-label="System status"><span>◉</span><span>▰</span><span>100%</span><span>⌄</span></div>
+    </header>
+
+    <main class="stage">
+      <aside class="quick-popover" id="quickPopover" aria-label="Quick controls">
+        <div class="popover-arrow" aria-hidden="true"></div>
+        <div class="quick-title-row">
+          <span class="mini-mark">✦</span>
+          <strong>Gnome美化</strong>
+          <button class="icon-button" id="closeQuick" type="button" aria-label="Close">×</button>
+        </div>
+        <div class="quick-target" id="quickTargetLabel">Dock + 应用程序栏</div>
+        <div class="segmented quick-effects" role="group" aria-label="Quick effect">
+          <button type="button" data-quick-effect="original" data-i18n="original">原始</button>
+          <button type="button" data-quick-effect="transparent" data-i18n="transparent">透明</button>
+          <button class="active" type="button" data-quick-effect="blur" data-i18n="blur">模糊</button>
+        </div>
+        <label class="quick-slider">
+          <span><span data-i18n="intensity">强度</span><output id="quickOpacityValue">62%</output></span>
+          <input id="quickOpacity" type="range" min="0" max="100" value="62">
+        </label>
+        <label class="quick-slider" id="quickRadiusRow">
+          <span><span data-i18n="radius">半径</span><output id="quickRadiusValue">34 px</output></span>
+          <input id="quickRadius" type="range" min="0" max="80" value="34">
+        </label>
+        <button class="wide-button" id="openSettings" type="button"><span>⚙</span><span data-i18n="openSettings">打开设置</span></button>
+      </aside>
+
+      <section class="settings-window" id="settingsWindow" aria-labelledby="windowTitle">
+        <header class="window-header">
+          <div class="window-title">
+            <strong id="windowTitle">Gnome美化</strong>
+            <span data-i18n="windowSubtitle">Dock 与应用程序栏背景</span>
+          </div>
+          <div class="window-actions">
+            <button type="button" class="icon-button" aria-label="Menu">☰</button>
+            <button type="button" class="icon-button" id="minimizeSettings" aria-label="Hide">−</button>
+            <button type="button" class="icon-button" id="closeSettings" aria-label="Close">×</button>
+          </div>
+        </header>
+
+        <div class="window-body">
+          <nav class="sidebar" aria-label="Preferences pages">
+            <button type="button" data-page="general"><span>⚙</span><span data-i18n="general">通用</span></button>
+            <button class="active" type="button" data-page="dock"><span>▣</span><span>Dock</span></button>
+            <button type="button" data-page="applications"><span>▦</span><span data-i18n="applications">应用程序栏</span></button>
+            <button type="button" data-page="advanced"><span>☷</span><span data-i18n="advanced">高级</span></button>
+            <button type="button" data-page="about"><span>ⓘ</span><span data-i18n="about">关于</span></button>
+          </nav>
+
+          <div class="page-scroll">
+            <section class="preferences-page" id="appearancePage">
+              <div class="section-heading">
+                <div><h1 id="pageTitle">Dock</h1><p id="pageDescription" data-i18n="dockDescription">设置桌面 Dock 的背景样式</p></div>
+                <span class="live-badge"><i></i><span data-i18n="preview">实时预览</span></span>
+              </div>
+
+              <section class="pref-section">
+                <h2 data-i18n="scope">应用范围</h2>
+                <div class="row-card switch-row">
+                  <div><strong data-i18n="linkTitle">联动 Dock 与应用程序栏</strong><span data-i18n="linkSubtitle">关闭后可分别设置两处效果</span></div>
+                  <label class="switch"><input id="linkTargets" type="checkbox" checked><span></span></label>
+                </div>
+                <div class="target-grid" id="targetGrid">
+                  <button class="target-card" type="button" data-target="applications">
+                    <span class="target-card-head"><strong data-i18n="applications">应用程序栏</strong><em data-i18n="linked">已联动</em></span>
+                    <span class="mini-dock-preview"><i></i><i></i><i></i><i></i><i></i></span>
+                  </button>
+                  <button class="target-card active" type="button" data-target="dock">
+                    <span class="target-card-head"><strong>Dock</strong><em data-i18n="linked">已联动</em></span>
+                    <span class="mini-app-preview"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                  </button>
+                </div>
+              </section>
+
+              <section class="pref-section">
+                <h2 data-i18n="backgroundEffect">背景效果</h2>
+                <div class="effect-grid" id="effectGrid">
+                  <button type="button" data-effect="original"><span class="effect-preview original-preview"><i></i><i></i><i></i></span><strong data-i18n="original">原始</strong></button>
+                  <button type="button" data-effect="transparent"><span class="effect-preview transparent-preview"><i></i><i></i><i></i></span><strong data-i18n="transparent">透明</strong></button>
+                  <button class="active" type="button" data-effect="blur"><span class="check">✓</span><span class="effect-preview blur-preview"><i></i><i></i><i></i></span><strong data-i18n="blur">模糊</strong></button>
+                  <button type="button" data-effect="glass"><span class="effect-preview glass-preview"><i></i><i></i><i></i></span><strong data-i18n="glass">磨砂玻璃</strong></button>
+                  <button type="button" data-effect="solid"><span class="effect-preview solid-preview"><i></i><i></i><i></i></span><strong data-i18n="solid">纯色</strong></button>
+                  <button type="button" data-effect="gradient"><span class="effect-preview gradient-preview"><i></i><i></i><i></i></span><strong data-i18n="gradient">渐变</strong></button>
+                </div>
+              </section>
+
+              <section class="pref-section" id="parameterSection">
+                <h2 id="parameterTitle" data-i18n="blurParameters">模糊参数</h2>
+                <div class="parameter-layout">
+                  <div class="parameter-card" id="parameterRows"></div>
+                  <div class="dock-live-preview" id="dockLivePreview" aria-label="Effect preview">
+                    <div class="preview-wallpaper"></div>
+                    <div class="preview-surface blur"><span>●</span><span>▣</span><span>⌘</span><span>✦</span><span>▦</span></div>
+                    <small data-i18n="effectPreview">效果预览</small>
+                  </div>
+                </div>
+                <div class="apply-status" id="applyStatus" role="status"><span class="status-icon">◷</span><span data-i18n="autoApply">停止调整 2 秒后自动应用</span></div>
+                <div class="warning" id="gpuWarning"><span>△</span><span data-i18n="gpuWarning">背景模糊可能增加 GPU 占用</span></div>
+              </section>
+
+              <section class="pref-section">
+                <h2 data-i18n="details">外观细节</h2>
+                <div class="detail-grid">
+                  <label class="detail-row"><span data-i18n="corner">圆角</span><input id="cornerRadius" type="range" min="0" max="36" value="18"><output>18 px</output></label>
+                  <label class="detail-row"><span data-i18n="border">边框</span><input id="borderWidth" type="range" min="0" max="4" value="1"><output>1 px</output></label>
+                  <label class="detail-row"><span data-i18n="shadow">阴影</span><input id="shadowStrength" type="range" min="0" max="100" value="20"><output>20%</output></label>
+                </div>
+              </section>
+            </section>
+
+            <section class="preferences-page hidden" id="generalPage">
+              <div class="section-heading"><div><h1 data-i18n="general">通用</h1><p data-i18n="generalDescription">设置语言、应用方式与默认行为</p></div></div>
+              <section class="pref-section"><h2 data-i18n="language">语言</h2><div class="row-card select-row"><div><strong data-i18n="displayLanguage">界面语言</strong><span data-i18n="languageSubtitle">自动选项会跟随系统语言</span></div><select id="languageSelect"><option value="auto">自动 / Automatic</option><option value="zh">中文</option><option value="en">English</option></select></div></section>
+              <section class="pref-section"><h2 data-i18n="behavior">应用行为</h2><div class="stack-card"><label class="form-row"><span><strong data-i18n="delay">调整延迟</strong><small data-i18n="delaySubtitle">停止操作后再应用效果</small></span><select id="delaySelect"><option value="500">0.5 s</option><option value="1000">1 s</option><option value="2000" selected>2 s</option><option value="3000">3 s</option></select></label><label class="form-row"><span><strong data-i18n="remember">记住最后一次效果</strong><small data-i18n="rememberSubtitle">登录后恢复上次使用的配置</small></span><span class="switch"><input type="checkbox" checked><span></span></span></label><label class="form-row"><span><strong data-i18n="indicator">显示 Dock 快捷图标</strong><small data-i18n="indicatorSubtitle">用于快速切换效果和打开设置</small></span><span class="switch"><input type="checkbox" checked><span></span></span></label></div></section>
+            </section>
+
+            <section class="preferences-page hidden" id="advancedPage">
+              <div class="section-heading"><div><h1 data-i18n="advanced">高级</h1><p data-i18n="advancedDescription">性能、兼容性与配置管理</p></div></div>
+              <section class="pref-section"><h2 data-i18n="performance">性能</h2><div class="stack-card"><label class="form-row"><span><strong data-i18n="performanceMode">性能保护</strong><small data-i18n="performanceSubtitle">在概览动画期间临时降低模糊半径</small></span><span class="switch"><input type="checkbox" checked><span></span></span></label><label class="form-row"><span><strong data-i18n="batteryMode">电池模式下降低效果</strong><small data-i18n="batterySubtitle">使用电池时优先减少 GPU 占用</small></span><span class="switch"><input type="checkbox" checked><span></span></span></label></div></section>
+              <section class="pref-section"><h2 data-i18n="presets">预设与恢复</h2><div class="action-grid"><button type="button" id="exportPreset">⇧ <span data-i18n="export">导出预设</span></button><button type="button" id="importPreset">⇩ <span data-i18n="import">导入预设</span></button><button class="danger-button" type="button" id="resetAll">↻ <span data-i18n="reset">恢复默认</span></button></div><input class="hidden" id="presetFile" type="file" accept="application/json"></section>
+            </section>
+
+            <section class="preferences-page hidden" id="aboutPage">
+              <div class="about-hero"><div class="app-mark">✦</div><h1>Gnome美化</h1><p data-i18n="manifestDescription">为 GNOME Shell 的 Dock 与应用程序栏提供独立或联动的透明、模糊、磨砂、纯色与渐变背景效果。</p><span>Version 1.0.0</span></div>
+              <section class="pref-section"><div class="stack-card about-list"><div class="form-row"><span data-i18n="author">作者</span><strong>Real April</strong></div><div class="form-row"><span data-i18n="email">邮箱</span><strong data-i18n="emailPending">待提供</strong></div><a class="form-row" href="https://github.com/yyyreal" target="_blank" rel="noreferrer"><span>GitHub</span><strong>github.com/yyyreal ↗</strong></a><div class="form-row"><span data-i18n="localization">本地化</span><strong>中文 / English</strong></div></div></section>
+            </section>
+          </div>
+        </div>
+
+        <footer class="window-footer">
+          <button type="button" id="resetCurrent">↻ <span data-i18n="resetCurrent">恢复当前页面默认值</span></button>
+          <span class="footer-state" id="footerState"><i></i><span data-i18n="saved">设置已保存</span></span>
+        </footer>
+      </section>
+    </main>
+
+    <nav class="dock" id="desktopDock" aria-label="Dock">
+      <button type="button" aria-label="Browser">◉</button><button type="button" aria-label="Files">▰</button><button type="button" aria-label="Terminal">›_</button><button type="button" aria-label="Documents">▤</button><button type="button" aria-label="Software">A</button><button class="extension-button active" id="extensionButton" type="button" aria-label="Gnome美化">✦</button><span class="dock-separator"></span><button type="button" aria-label="Applications">⠿</button>
+    </nav>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+  <script src="./script.js"></script>
+</body>
+</html>
