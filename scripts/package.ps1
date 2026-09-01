@@ -54,6 +54,18 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'schemas') -Destination $stagePat
 $schemaCompiler = Get-Command glib-compile-schemas -ErrorAction SilentlyContinue
 if ($schemaCompiler) {
     & $schemaCompiler.Source (Join-Path $stagePath 'schemas')
+} else {
+    $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+    if ($wsl) {
+        $windowsSchemaPath = (Join-Path $stagePath 'schemas').Replace('\', '/')
+        $linuxSchemaPath = (& $wsl.Source wslpath -a $windowsSchemaPath).Trim()
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($linuxSchemaPath)) {
+            & $wsl.Source glib-compile-schemas --strict $linuxSchemaPath
+            if ($LASTEXITCODE -ne 0) {
+                throw 'WSL 中的 GSettings schema 编译失败。'
+            }
+        }
+    }
 }
 
 node --check (Join-Path $stagePath 'extension.js')
@@ -76,4 +88,3 @@ if (Test-Path -LiteralPath $zipPath) {
 
 Compress-Archive -Path (Join-Path $stagePath '*') -DestinationPath $zipPath -CompressionLevel Optimal
 Write-Host "打包完成：$zipPath"
-
