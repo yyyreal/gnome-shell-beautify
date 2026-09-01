@@ -216,7 +216,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         group.add(this._switchRow(
             'remember-last', _('记住最后一次效果'), _('登录后恢复上次使用的配置')));
         group.add(this._switchRow(
-            'show-indicator', _('显示应用程序栏快捷图标'), _('快速切换效果和打开设置')));
+            'show-indicator', _('显示 Dock 快捷图标'), _('点击图标打开快捷菜单和设置')));
         return page;
     }
 
@@ -566,7 +566,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         page.add(heroGroup);
 
         const info = new Adw.PreferencesGroup();
-        info.add(this._infoRow(_('版本'), '1.0.3'));
+        info.add(this._infoRow(_('版本'), '1.0.4'));
         info.add(this._infoRow(_('作者'), 'Real April'));
         const emailRow = new Adw.ActionRow({title: _('邮箱')});
         emailRow.add_suffix(new Gtk.LinkButton({

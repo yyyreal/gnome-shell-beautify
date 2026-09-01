@@ -8,7 +8,7 @@
 - Dock 与应用程序栏联动或独立配置
 - 模糊半径、透明度、亮度、色调、渐变和外观细节参数
 - 所有效果统一采用 `0% = 完全不透明、100% = 完全透明`
-- 应用程序栏快捷图标，可快速切换效果和打开设置
+- Dock 快捷图标，可弹出快速效果菜单并进入设置
 - 停止调整后延迟应用，减少连续重绘
 - 中文、英文及跟随系统语言
 - 性能保护、电池模式、预设导入导出和恢复默认
@@ -20,7 +20,7 @@ GNOME Shell 46–51。扩展仅面向 GNOME 46 及以上版本。
 ## 安装
 
 ```bash
-gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.3.zip --force
+gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.4.zip --force
 ```
 
 注销并重新登录后启用：

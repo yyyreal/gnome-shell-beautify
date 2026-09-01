@@ -40,6 +40,11 @@ export default class GnomeBeautifyExtension extends Extension {
             Main.overview.connect('showing', () => this._beginOverviewAnimation()),
             Main.overview.connect('hiding', () => this._beginOverviewAnimation()),
         ];
+        this._extensionStateChangedId = Main.extensionManager.connect(
+            'extension-state-changed', () => this._scheduleIndicatorSync());
+        this._monitorsChangedId = Main.layoutManager.connect(
+            'monitors-changed', () => this._scheduleIndicatorSync());
+        this._indicatorSyncSource = 0;
 
         this._interfaceSettings = new Gio.Settings({
             schema_id: 'org.gnome.desktop.interface',
@@ -78,6 +83,17 @@ export default class GnomeBeautifyExtension extends Extension {
         for (const signalId of this._overviewSignalIds ?? [])
             Main.overview.disconnect(signalId);
         this._overviewSignalIds = null;
+
+        if (this._extensionStateChangedId)
+            Main.extensionManager.disconnect(this._extensionStateChangedId);
+        this._extensionStateChangedId = 0;
+        if (this._monitorsChangedId)
+            Main.layoutManager.disconnect(this._monitorsChangedId);
+        this._monitorsChangedId = 0;
+        if (this._indicatorSyncSource) {
+            GLib.Source.remove(this._indicatorSyncSource);
+            this._indicatorSyncSource = 0;
+        }
 
         for (const signalId of this._interfaceSignalIds ?? [])
             this._interfaceSettings.disconnect(signalId);
@@ -178,61 +194,157 @@ export default class GnomeBeautifyExtension extends Extension {
 
     _syncIndicator() {
         const shouldShow = this._settings.get_boolean('show-indicator');
-        if (shouldShow && !this._dashItem)
-            this._createIndicator();
-        else if (!shouldShow && this._dashItem)
+        if (!shouldShow) {
             this._destroyIndicator();
+            return;
+        }
+
+        const target = this._findDockTarget();
+        if (!target) {
+            this._destroyIndicator();
+            return;
+        }
+
+        if (this._dashItem && this._indicatorContainer === target.container)
+            return;
+
+        this._destroyIndicator();
+        try {
+            this._createIndicator(target);
+        } catch (error) {
+            console.warn(`${this.uuid}: failed to attach Dock shortcut: ${error.message}`);
+            this._destroyIndicator();
+            const dash = Main.overview.dash;
+            if (target.dash !== dash && dash?._dashContainer) {
+                this._createIndicator({
+                    dash,
+                    container: dash._dashContainer,
+                    side: St.Side.BOTTOM,
+                });
+            }
+        }
     }
 
-    _createIndicator() {
+    _scheduleIndicatorSync(delay = 300) {
+        if (!this._settings)
+            return;
+        if (this._indicatorSyncSource)
+            GLib.Source.remove(this._indicatorSyncSource);
+        this._indicatorSyncSource = GLib.timeout_add(
+            GLib.PRIORITY_DEFAULT, delay, () => {
+                this._indicatorSyncSource = 0;
+                this._syncIndicator();
+                return GLib.SOURCE_REMOVE;
+            });
+    }
+
+    _findDockTarget() {
+        const persistentDocks = [];
+        const pending = [global.stage];
+        while (pending.length > 0) {
+            const actor = pending.pop();
+            try {
+                if (actor.get_name?.() === 'dashtodockContainer' &&
+                    actor.dash?._dashContainer)
+                    persistentDocks.push(actor);
+                pending.push(...(actor.get_children?.() ?? []));
+            } catch (error) {
+                console.debug(`${this.uuid}: unavailable dock actor: ${error.message}`);
+            }
+        }
+
+        const primaryIndex = Main.layoutManager.primaryIndex;
+        const persistentDock = persistentDocks.find(dock => dock.isMain) ??
+            persistentDocks.find(dock => dock.monitorIndex === primaryIndex) ??
+            persistentDocks[0];
+        if (persistentDock) {
+            return {
+                dash: persistentDock.dash,
+                container: persistentDock.dash._dashContainer,
+                side: persistentDock.position ?? St.Side.BOTTOM,
+                persistent: true,
+            };
+        }
+
         const dash = Main.overview.dash;
         if (!dash?._dashContainer)
-            return;
+            return null;
+        return {
+            dash,
+            container: dash._dashContainer,
+            side: St.Side.BOTTOM,
+            persistent: false,
+        };
+    }
+
+    _createIndicator(target) {
+        const {dash, container, side, persistent = false} = target;
+        this._indicatorDash = dash;
+        this._indicatorContainer = container;
 
         this._dashItem = new Dash.DashItemContainer();
         this._indicator = new PanelMenu.Button(0.5, 'Gnome美化', false);
         this._indicator.remove_style_class_name('panel-button');
         this._indicator.add_style_class_name('gnome-beautify-dash-button');
         this._indicator.setMenu(new PopupMenu.PopupMenu(
-            this._indicator, 0.5, St.Side.BOTTOM));
+            this._indicator, 0.5, side));
+        if (persistent) {
+            this._indicator.menu.connect('open-state-changed', (_menu, open) => {
+                if (dash.get_stage?.())
+                    dash.emit(open ? 'menu-opened' : 'menu-closed');
+            });
+        }
 
         const iconPath = `${this.path}/icons/gnome-beautify-symbolic.svg`;
         this._indicatorIcon = new St.Icon({
             gicon: Gio.icon_new_for_string(iconPath),
-            icon_size: this._dashIconSize(),
+            icon_size: this._dashIconSize(dash),
         });
         this._indicator.add_child(this._indicatorIcon);
 
         this._dashItem.setChild(this._indicator);
         this._dashItem.setLabelText('Gnome美化');
-        const position = Math.max(1, dash._dashContainer.get_n_children() - 1);
-        dash._dashContainer.insert_child_at_index(this._dashItem, position);
+        const position = Math.max(1, container.get_n_children() - 1);
+        container.insert_child_at_index(this._dashItem, position);
         this._dashItem.show(false);
 
-        this._dashIconSizeId = dash.connect('icon-size-changed', () => {
+        dash.connectObject('icon-size-changed', () => {
             if (this._indicatorIcon)
-                this._indicatorIcon.icon_size = this._dashIconSize();
+                this._indicatorIcon.icon_size = this._dashIconSize(dash);
+        }, this._dashItem);
+        const dashItem = this._dashItem;
+        dashItem.connect('destroy', () => {
+            if (this._dashItem !== dashItem)
+                return;
+            this._dashItem = null;
+            this._indicator = null;
+            this._indicatorIcon = null;
+            this._indicatorDash = null;
+            this._indicatorContainer = null;
+            this._quickEffectItems = null;
+            this._quickOpacitySlider = null;
+            this._quickRadiusSlider = null;
+            if (!this._destroyingIndicator)
+                this._scheduleIndicatorSync();
         });
         this._rebuildQuickMenu();
     }
 
-    _dashIconSize() {
-        const dash = Main.overview.dash;
+    _dashIconSize(dash = this._indicatorDash ?? Main.overview.dash) {
         return Math.max(22, (dash.iconSize ?? dash._iconSize ?? 48) - 10);
     }
 
     _destroyIndicator() {
-        const dash = Main.overview.dash;
-        if (dash && this._dashIconSizeId)
-            dash.disconnect(this._dashIconSizeId);
-        this._dashIconSizeId = 0;
-
+        this._destroyingIndicator = true;
         if (this._indicator)
             this._indicator.setMenu(null);
         this._dashItem?.destroy();
+        this._destroyingIndicator = false;
         this._dashItem = null;
         this._indicator = null;
         this._indicatorIcon = null;
+        this._indicatorDash = null;
+        this._indicatorContainer = null;
         this._quickEffectItems = null;
         this._quickOpacitySlider = null;
         this._quickRadiusSlider = null;

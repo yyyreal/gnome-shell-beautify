@@ -2,7 +2,7 @@
 <schemalist>
   <schema id="org.gnome.shell.extensions.gnome-beautify" path="/org/gnome/shell/extensions/gnome-beautify/">
     <key name="linked-targets" type="b"><default>true</default><summary>Link Dock and application bar settings</summary></key>
-    <key name="show-indicator" type="b"><default>true</default><summary>Show the quick access icon in the application bar</summary></key>
+    <key name="show-indicator" type="b"><default>true</default><summary>Show the quick access icon in the Dock</summary></key>
     <key name="apply-delay" type="i"><range min="500" max="5000"/><default>2000</default><summary>Delay before applying changes in milliseconds</summary></key>
     <key name="language-mode" type="s"><choices><choice value="auto"/><choice value="zh"/><choice value="en"/></choices><default>'auto'</default><summary>Interface language</summary></key>
     <key name="remember-last" type="b"><default>true</default><summary>Remember the last effect</summary></key>
