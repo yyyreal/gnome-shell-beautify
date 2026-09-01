@@ -1,9 +1,8 @@
 {
   "name": "Gnome美化",
   "description": "为 GNOME Shell 的 Dock 与应用程序栏提供独立或联动的透明、模糊、磨砂、纯色与渐变背景效果。",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Real April",
   "homepage": "https://github.com/yyyreal",
   "uuid": "gnome-beautify@yyyreal.github.com"
 }
-

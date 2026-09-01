@@ -33,6 +33,7 @@ const ENGLISH = new Map([
     ['独立设置', 'Independent'],
     ['背景效果', 'Background Effect'],
     ['选择此区域使用的背景样式', 'Choose the background style for this surface'],
+    ['效果预览', 'Effect Preview'],
     ['模糊参数', 'Blur Parameters'],
     ['磨砂玻璃参数', 'Frosted Glass Parameters'],
     ['透明参数', 'Transparency Parameters'],

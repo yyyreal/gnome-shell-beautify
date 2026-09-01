@@ -378,14 +378,23 @@ export default class GnomeBeautifyExtension extends Extension {
         const base = original?.style ? `${original.style};` : '';
         const details = [
             `border-radius: ${corner}px`,
-            `border-width: ${border}px`,
-            `border-color: rgba(255,255,255,${Math.min(0.34, opacity * 0.32).toFixed(2)})`,
-            `box-shadow: 0 6px 20px rgba(0,0,0,${shadow.toFixed(2)})`,
         ];
 
-        if (effect === 'transparent')
-            details.push('background-color: rgba(0,0,0,0)');
-        else if (effect === 'solid')
+        if (effect === 'transparent') {
+            const backgroundAlpha = Math.max(0, 1 - opacity);
+            details.push(
+                `background-color: rgba(30,30,34,${backgroundAlpha.toFixed(2)})`,
+                'border-width: 0px',
+                'border-color: rgba(0,0,0,0)',
+                'box-shadow: none');
+        } else {
+            details.push(
+                `border-width: ${border}px`,
+                `border-color: rgba(255,255,255,${Math.min(0.34, opacity * 0.32).toFixed(2)})`,
+                `box-shadow: 0 6px 20px rgba(0,0,0,${shadow.toFixed(2)})`);
+        }
+
+        if (effect === 'solid')
             details.push(`background-color: ${this._rgba(this._settings.get_string(`${prefix}-color`), opacity)}`);
         else if (effect === 'gradient') {
             const direction = this._settings.get_int(`${prefix}-gradient-direction`);
@@ -394,7 +403,7 @@ export default class GnomeBeautifyExtension extends Extension {
                 `background-gradient-direction: ${orientation}`,
                 `background-gradient-start: ${this._rgba(this._settings.get_string(`${prefix}-gradient-start`), opacity)}`,
                 `background-gradient-end: ${this._rgba(this._settings.get_string(`${prefix}-gradient-end`), opacity)}`);
-        } else {
+        } else if (effect === 'blur' || effect === 'glass') {
             const tint = effect === 'glass'
                 ? this._settings.get_int(`${prefix}-tint`) / 100
                 : 0;

@@ -4,7 +4,7 @@
 
 .effect-tile {
     min-width: 112px;
-    min-height: 86px;
+    min-height: 108px;
     padding: 10px;
     border-radius: 12px;
 }
@@ -14,11 +14,84 @@
     outline-offset: -2px;
 }
 
-.effect-tile image {
-    color: @accent_color;
+.effect-tile label {
+    font-weight: 600;
 }
 
-.effect-tile label {
+.target-card {
+    padding: 13px;
+    border: 1px solid alpha(@window_fg_color, 0.12);
+    border-radius: 12px;
+    background-color: alpha(@window_fg_color, 0.045);
+}
+
+.target-preview {
+    min-height: 54px;
+    padding: 10px 18px;
+    border-radius: 10px;
+    background-image: linear-gradient(135deg, #37305a, #613a73);
+    color: white;
+}
+
+.effect-preview {
+    min-height: 54px;
+    min-width: 88px;
+    padding: 9px 12px;
+    border-radius: 9px;
+    color: white;
+}
+
+.effect-original {
+    background-color: #242424;
+}
+
+.effect-transparent {
+    background-color: alpha(@window_fg_color, 0.07);
+    border: 1px dashed alpha(@window_fg_color, 0.28);
+    box-shadow: none;
+}
+
+.effect-blur {
+    background-image: linear-gradient(135deg, alpha(#4b3d74, 0.78), alpha(#6f3d78, 0.58));
+}
+
+.effect-glass {
+    background-image: linear-gradient(135deg, alpha(#c7c2e8, 0.42), alpha(#624f77, 0.60));
+    border: 1px solid alpha(white, 0.32);
+}
+
+.effect-solid {
+    background-color: #544d42;
+}
+
+.effect-gradient {
+    background-image: linear-gradient(100deg, #5a416d, #8c425f);
+}
+
+.live-preview {
+    min-height: 136px;
+    padding: 14px;
+    border-radius: 12px;
+    background-image: linear-gradient(145deg, #261b43, #111b36);
+    color: white;
+}
+
+.live-preview-surface {
+    min-height: 42px;
+    padding: 10px 18px;
+    border-radius: 18px;
+    color: white;
+    box-shadow: 0 8px 22px alpha(black, 0.30);
+}
+
+.live-preview-surface.effect-transparent {
+    background-color: transparent;
+    border: 1px solid alpha(white, 0.16);
+    box-shadow: none;
+}
+
+.numeric-value {
+    font-feature-settings: "tnum";
     font-weight: 600;
 }
 
@@ -50,4 +123,3 @@
 .about-description {
     color: alpha(@window_fg_color, 0.68);
 }
-

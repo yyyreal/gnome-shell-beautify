@@ -165,6 +165,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
 
         const currentEffect = this._settings.get_string(`${prefix}-effect`);
         let firstButton = null;
+        let syncingEffect = false;
         const effectButtons = new Map();
         for (const [value, label, iconName] of EFFECTS) {
             const button = new Gtk.ToggleButton();
@@ -179,23 +180,38 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
                 halign: Gtk.Align.CENTER,
                 valign: Gtk.Align.CENTER,
             });
-            content.append(new Gtk.Image({icon_name: iconName, pixel_size: 30}));
+            content.append(this._buildEffectPreview(value, iconName));
             content.append(new Gtk.Label({label: _(label)}));
             button.set_child(content);
             button.active = currentEffect === value;
             button.connect('toggled', widget => {
-                if (!widget.active)
+                if (!widget.active || syncingEffect)
                     return;
                 this._settings.set_string(`${prefix}-effect`, value);
                 this._updateParameterVisibility(prefix, value);
+                this._refreshLivePreview(prefix, value);
                 this._markPending(statusRow);
             });
             flow.append(button);
             effectButtons.set(value, button);
         }
+        const effectChangedId = this._settings.connect(`changed::${prefix}-effect`, () => {
+            const value = this._settings.get_string(`${prefix}-effect`);
+            syncingEffect = true;
+            effectButtons.get(value)?.set_active(true);
+            syncingEffect = false;
+            this._updateParameterVisibility(prefix, value);
+            this._refreshLivePreview(prefix, value);
+        });
+        effectBox.connect('destroy', () => {
+            if (effectChangedId)
+                this._settings?.disconnect(effectChangedId);
+        });
 
         const parameterGroup = new Adw.PreferencesGroup();
         page.add(parameterGroup);
+        const livePreview = this._buildLivePreview(prefix, currentEffect);
+        parameterGroup.add(livePreview.container);
         const rows = new Map();
         rows.set('radius', this._scaleRow(prefix, 'blur-radius', _('模糊半径'), 0, 80, 1, 'px', statusRow));
         rows.set('opacity', this._scaleRow(prefix, 'opacity', _('透明度'), 0, 100, 1, '%', statusRow));
@@ -249,10 +265,12 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             rows,
             warningRow,
             effectButtons,
+            livePreview,
         };
         if (!isDock)
             this._appControls.push(...this._appAppearance.groups);
         this._updateParameterVisibility(prefix, currentEffect);
+        this._refreshLivePreview(prefix, currentEffect);
         return page;
     }
 
@@ -267,26 +285,130 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         });
         group.add(linkRow);
 
-        const applicationRow = new Adw.ActionRow({
-            title: _('应用程序栏'),
-            subtitle: _('设置概览中应用程序栏的背景样式'),
+        const cards = new Gtk.Grid({
+            column_spacing: 10,
+            row_spacing: 10,
+            column_homogeneous: true,
+            margin_top: 8,
+            margin_bottom: 4,
         });
-        applicationRow.add_prefix(new Gtk.Image({icon_name: 'view-app-grid-symbolic'}));
-        this._appLinkStatus = new Gtk.Label({valign: Gtk.Align.CENTER});
-        this._appLinkStatus.add_css_class('linked-status');
-        applicationRow.add_suffix(this._appLinkStatus);
-        group.add(applicationRow);
+        const applicationCard = this._buildTargetCard(
+            _('应用程序栏'), 'view-app-grid-symbolic',
+            ['folder-symbolic', 'utilities-terminal-symbolic', 'text-x-generic-symbolic', 'view-app-grid-symbolic']);
+        this._appLinkStatus = applicationCard.status;
+        cards.attach(applicationCard.container, 0, 0, 1, 1);
 
-        const dockRow = new Adw.ActionRow({
-            title: 'Dock',
-            subtitle: _('设置 Dock 顶部系统栏的背景样式'),
-        });
-        dockRow.add_prefix(new Gtk.Image({icon_name: 'computer-symbolic'}));
-        this._dockLinkStatus = new Gtk.Label({valign: Gtk.Align.CENTER});
-        this._dockLinkStatus.add_css_class('linked-status');
-        dockRow.add_suffix(this._dockLinkStatus);
-        group.add(dockRow);
+        const dockCard = this._buildTargetCard(
+            'Dock', 'computer-symbolic',
+            ['view-more-symbolic', 'network-wireless-signal-excellent-symbolic', 'audio-volume-high-symbolic', 'battery-good-symbolic']);
+        this._dockLinkStatus = dockCard.status;
+        cards.attach(dockCard.container, 1, 0, 1, 1);
+        group.add(cards);
         return group;
+    }
+
+    _buildTargetCard(title, iconName, previewIcons) {
+        const container = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 10,
+            hexpand: true,
+        });
+        container.add_css_class('target-card');
+
+        const header = new Gtk.Box({spacing: 8});
+        header.append(new Gtk.Image({icon_name: iconName, pixel_size: 18}));
+        const titleLabel = new Gtk.Label({
+            label: title,
+            hexpand: true,
+            xalign: 0,
+        });
+        titleLabel.add_css_class('heading');
+        header.append(titleLabel);
+        const status = new Gtk.Label({valign: Gtk.Align.CENTER});
+        status.add_css_class('linked-status');
+        header.append(status);
+        container.append(header);
+
+        const preview = new Gtk.Box({
+            spacing: 10,
+            halign: Gtk.Align.FILL,
+            valign: Gtk.Align.CENTER,
+            homogeneous: true,
+        });
+        preview.add_css_class('target-preview');
+        for (const previewIcon of previewIcons)
+            preview.append(new Gtk.Image({icon_name: previewIcon, pixel_size: 19}));
+        container.append(preview);
+        return {container, status};
+    }
+
+    _buildEffectPreview(effect, iconName) {
+        const preview = new Gtk.Box({
+            spacing: 6,
+            halign: Gtk.Align.FILL,
+            valign: Gtk.Align.CENTER,
+            homogeneous: true,
+        });
+        preview.add_css_class('effect-preview');
+        preview.add_css_class(`effect-${effect}`);
+        for (let index = 0; index < 3; index++)
+            preview.append(new Gtk.Image({icon_name: iconName, pixel_size: 14}));
+        return preview;
+    }
+
+    _buildLivePreview(prefix, effect) {
+        const container = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 10,
+            margin_top: 8,
+            margin_bottom: 8,
+        });
+        container.add_css_class('live-preview');
+
+        const heading = new Gtk.Box({spacing: 8});
+        const label = new Gtk.Label({
+            label: this._('效果预览'),
+            hexpand: true,
+            xalign: 0,
+        });
+        label.add_css_class('heading');
+        heading.append(label);
+        const value = new Gtk.Label({xalign: 1});
+        value.add_css_class('dim-label');
+        heading.append(value);
+        container.append(heading);
+
+        const surface = new Gtk.Box({
+            spacing: 10,
+            halign: Gtk.Align.CENTER,
+            valign: Gtk.Align.CENTER,
+        });
+        surface.add_css_class('live-preview-surface');
+        surface.add_css_class(`effect-${effect}`);
+        const icons = prefix === 'dock'
+            ? ['view-more-symbolic', 'network-wireless-signal-excellent-symbolic', 'audio-volume-high-symbolic', 'battery-good-symbolic']
+            : ['folder-symbolic', 'utilities-terminal-symbolic', 'text-x-generic-symbolic', 'view-app-grid-symbolic'];
+        for (const icon of icons)
+            surface.append(new Gtk.Image({icon_name: icon, pixel_size: 20}));
+        container.append(surface);
+        return {container, surface, value};
+    }
+
+    _refreshLivePreview(prefix, requestedEffect = null) {
+        const state = this[`_${prefix}Appearance`];
+        if (!state?.livePreview)
+            return;
+        const effect = requestedEffect ?? this._settings.get_string(`${prefix}-effect`);
+        for (const [name] of EFFECTS)
+            state.livePreview.surface.remove_css_class(`effect-${name}`);
+        state.livePreview.surface.add_css_class(`effect-${effect}`);
+        const effectLabel = this._(EFFECTS.find(([name]) => name === effect)?.[1] ?? '原始');
+        const opacity = this._settings.get_int(`${prefix}-opacity`);
+        const radius = this._settings.get_int(`${prefix}-blur-radius`);
+        state.livePreview.value.set_label(
+            effect === 'blur' || effect === 'glass'
+                ? `${effectLabel} · ${radius} px · ${opacity}%`
+                : effect === 'original' ? effectLabel : `${effectLabel} · ${opacity}%`);
     }
 
     _buildAdvancedPage() {
@@ -347,7 +469,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         page.add(heroGroup);
 
         const info = new Adw.PreferencesGroup();
-        info.add(this._infoRow(_('版本'), '1.0.0'));
+        info.add(this._infoRow(_('版本'), '1.0.1'));
         info.add(this._infoRow(_('作者'), 'Real April'));
         info.add(this._infoRow(_('邮箱'), _('待提供')));
         info.add(this._infoRow(_('本地化'), '中文 / English'));
@@ -375,21 +497,49 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             spacing: 10,
             valign: Gtk.Align.CENTER,
         });
-        const scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, min, max, step);
+        const adjustment = new Gtk.Adjustment({
+            lower: min,
+            upper: max,
+            step_increment: step,
+            page_increment: Math.max(step, Math.round((max - min) / 10)),
+            value: this._settings.get_int(key),
+        });
+        const scale = new Gtk.Scale({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            adjustment,
+            draw_value: false,
+            hexpand: true,
+        });
         scale.add_css_class('parameter-scale');
-        scale.draw_value = false;
-        scale.hexpand = true;
-        scale.value = this._settings.get_int(key);
         const output = new Gtk.Label({
             label: `${this._settings.get_int(key)} ${unit}`.trim(),
             width_chars: 6,
             xalign: 1,
         });
-        scale.connect('value-changed', widget => {
-            const value = Math.round(widget.value);
-            output.label = `${value} ${unit}`.trim();
+        output.add_css_class('numeric-value');
+        let syncing = false;
+        adjustment.connect('value-changed', widget => {
+            const value = Math.round(widget.get_value());
+            output.set_label(`${value} ${unit}`.trim());
+            if (syncing)
+                return;
             this._settings.set_int(key, value);
+            this._refreshLivePreview(prefix);
             this._markPending(statusRow);
+        });
+        const changedId = this._settings.connect(`changed::${key}`, () => {
+            const value = this._settings.get_int(key);
+            output.set_label(`${value} ${unit}`.trim());
+            if (Math.round(adjustment.get_value()) !== value) {
+                syncing = true;
+                adjustment.set_value(value);
+                syncing = false;
+            }
+            this._refreshLivePreview(prefix);
+        });
+        row.connect('destroy', () => {
+            if (changedId)
+                this._settings?.disconnect(changedId);
         });
         box.append(scale);
         box.append(output);
@@ -412,7 +562,18 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             const color = widget.rgba;
             const hex = `#${this._channel(color.red)}${this._channel(color.green)}${this._channel(color.blue)}`;
             this._settings.set_string(key, hex);
+            this._refreshLivePreview(prefix);
             this._markPending(statusRow);
+        });
+        const changedId = this._settings.connect(`changed::${key}`, () => {
+            const updated = new Gdk.RGBA();
+            updated.parse(this._settings.get_string(key));
+            button.set_rgba(updated);
+            this._refreshLivePreview(prefix);
+        });
+        row.connect('destroy', () => {
+            if (changedId)
+                this._settings?.disconnect(changedId);
         });
         row.add_suffix(button);
         row.activatable_widget = button;

@@ -19,7 +19,7 @@ GNOME Shell 46–51。扩展仅面向 GNOME 46 及以上版本。
 ## 安装
 
 ```bash
-gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.0.zip --force
+gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.1.zip --force
 ```
 
 注销并重新登录后启用：
