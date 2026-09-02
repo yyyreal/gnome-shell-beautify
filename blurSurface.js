@@ -9,7 +9,7 @@ export const BLUR_EFFECT_NAME = 'gnome-beautify-background-blur';
 // zero-sized wrapper must never acquire the target's preferred size: panelBox
 // and Ubuntu Dock contain BoxLayouts, where that would create another row.
 export class BackgroundBlurLayer {
-    constructor(target, anchor, laters, onDestroy) {
+    constructor(target, anchor, laters, onDestroy, onStateChange) {
         this.target = target;
         this.anchor = anchor;
         this.parent = anchor.get_parent();
@@ -18,6 +18,8 @@ export class BackgroundBlurLayer {
 
         this._laters = laters;
         this._onDestroy = onDestroy;
+        this._onStateChange = onStateChange;
+        this.state = 'waiting';
         this._signals = [];
         this._laterId = 0;
         this.destroyed = false;
@@ -100,7 +102,15 @@ export class BackgroundBlurLayer {
             blur.brightness = brightness;
         }
         blur.queue_repaint();
+        this._setState('waiting');
         this._queueSync();
+    }
+
+    _setState(state) {
+        if (this.state === state)
+            return;
+        this.state = state;
+        this._onStateChange?.(this, state);
     }
 
     _queueSync() {
@@ -108,7 +118,13 @@ export class BackgroundBlurLayer {
             return;
         this._laterId = this._laters.add(Meta.LaterType.BEFORE_REDRAW, () => {
             this._laterId = 0;
-            this._syncGeometry();
+            try {
+                this._syncGeometry();
+            } catch (error) {
+                this.surface.hide();
+                this._setState('failed');
+                console.warn(`Gnome美化: blur geometry failed: ${error.message}`);
+            }
             return false;
         });
     }
@@ -120,9 +136,14 @@ export class BackgroundBlurLayer {
             this.destroy();
             return;
         }
-        if (!this.target.is_mapped() || !this.target.has_allocation() ||
-            !this.parent.has_allocation()) {
+        if (!this.target.is_mapped()) {
             this.surface.hide();
+            this._setState('hidden');
+            return;
+        }
+        if (!this.target.has_allocation() || !this.parent.has_allocation()) {
+            this.surface.hide();
+            this._setState('waiting');
             return;
         }
 
@@ -132,6 +153,7 @@ export class BackgroundBlurLayer {
         const [ok2, x2, y2] = this.parent.transform_stage_point(stageX + width, stageY + height);
         if (!ok1 || !ok2 || x2 <= x1 || y2 <= y1) {
             this.surface.hide();
+            this._setState('waiting');
             return;
         }
 
@@ -153,6 +175,7 @@ export class BackgroundBlurLayer {
         this.surface.set_size(x2 - x1, y2 - y1);
         this.surface.opacity = Math.round(opacity);
         this.surface.show();
+        this._setState('applied');
     }
 
     destroy(groupAlreadyDestroying = false) {
@@ -169,5 +192,6 @@ export class BackgroundBlurLayer {
             this.group.destroy();
         this._onDestroy?.(this);
         this._onDestroy = null;
+        this._onStateChange = null;
     }
 }

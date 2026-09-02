@@ -7,6 +7,7 @@ import Gtk from 'gi://Gtk?version=4.0';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {getTranslator} from './i18n.js';
+import {TARGET_SUFFIXES, effectiveKey, watchEffectiveSetting, runtimeSummary} from './appearanceConfig.js';
 
 const EFFECTS = [
     ['original', '原始', 'document-properties-symbolic'],
@@ -15,12 +16,6 @@ const EFFECTS = [
     ['glass', '磨砂玻璃', 'weather-clear-night-symbolic'],
     ['solid', '纯色', 'color-select-symbolic'],
     ['gradient', '渐变', 'applications-graphics-symbolic'],
-];
-
-const TARGET_SUFFIXES = [
-    'effect', 'blur-radius', 'opacity', 'brightness', 'tint', 'color',
-    'gradient-start', 'gradient-end', 'gradient-direction',
-    'corner-radius', 'border-width', 'shadow-strength',
 ];
 
 const GLOBAL_KEYS = [
@@ -39,7 +34,8 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         this._window = window;
         this._settings = this.getSettings();
         this._ = getTranslator(this._settings);
-        this._statusSources = new Map();
+        this._statusRows = [];
+        this._statusRequest = GLib.uuid_string_random();
         this._appControls = [];
 
         window.set_default_size(980, 760);
@@ -59,11 +55,16 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         this._linkedChangedId = this._settings.connect('changed::linked-targets',
             () => this._updateLinkedState());
         this._updateLinkedState();
+        this._runtimeStatusChangedId = this._settings.connect('changed',
+            () => this._refreshApplyStatus());
+        this._settings.set_string('status-request', this._statusRequest);
+        this._refreshApplyStatus();
 
         window.connect('close-request', () => {
-            for (const sourceId of this._statusSources.values())
-                GLib.Source.remove(sourceId);
-            this._statusSources.clear();
+            if (this._runtimeStatusChangedId)
+                this._settings.disconnect(this._runtimeStatusChangedId);
+            this._runtimeStatusChangedId = 0;
+            this._statusRows = [];
             if (this._linkedChangedId)
                 this._settings.disconnect(this._linkedChangedId);
             this._linkedChangedId = 0;
@@ -232,9 +233,10 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             page.add(this._buildScopeGroup());
 
         const statusRow = new Adw.ActionRow({
-            title: _('停止调整后自动应用'),
-            subtitle: `${this._settings.get_int('apply-delay') / 1000} s`,
+            title: _('应用状态'),
+            subtitle: _('等待扩展响应，请确认扩展已启用'),
         });
+        this._statusRows.push(statusRow);
         statusRow.add_prefix(new Gtk.Image({icon_name: 'alarm-symbolic'}));
 
         const effectGroup = new Adw.PreferencesGroup({
@@ -258,7 +260,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         effectGroup.add(effectBox);
         page.add(effectGroup);
 
-        const currentEffect = this._settings.get_string(`${prefix}-effect`);
+        const currentEffect = this._settings.get_string(effectiveKey(this._settings, prefix, 'effect'));
         let firstButton = null;
         let syncingEffect = false;
         const effectButtons = new Map();
@@ -282,7 +284,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             button.connect('toggled', widget => {
                 if (!widget.active || syncingEffect)
                     return;
-                this._settings.set_string(`${prefix}-effect`, value);
+                this._settings.set_string(effectiveKey(this._settings, prefix, 'effect'), value);
                 this._updateParameterVisibility(prefix, value);
                 this._refreshLivePreview(prefix, value);
                 this._markPending(statusRow);
@@ -290,8 +292,8 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             flow.append(button);
             effectButtons.set(value, button);
         }
-        const effectChangedId = this._settings.connect(`changed::${prefix}-effect`, () => {
-            const value = this._settings.get_string(`${prefix}-effect`);
+        const effectChangedId = watchEffectiveSetting(this._settings, prefix, 'effect', () => {
+            const value = this._settings.get_string(effectiveKey(this._settings, prefix, 'effect'));
             syncingEffect = true;
             effectButtons.get(value)?.set_active(true);
             syncingEffect = false;
@@ -363,6 +365,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             warningRow,
             effectButtons,
             livePreview,
+            statusRow,
         };
         if (!isDock)
             this._appControls.push(...this._appAppearance.groups);
@@ -376,10 +379,6 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         const group = new Adw.PreferencesGroup({title: _('应用范围')});
         const linkRow = this._switchRow(
             'linked-targets', _('联动 Dock 与应用程序栏'), _('关闭后可分别设置两处效果'));
-        linkRow.connect('notify::active', row => {
-            if (row.active)
-                this._copyDockToApplication();
-        });
         group.add(linkRow);
 
         const cards = new Gtk.Grid({
@@ -495,13 +494,13 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         const state = this[`_${prefix}Appearance`];
         if (!state?.livePreview)
             return;
-        const effect = requestedEffect ?? this._settings.get_string(`${prefix}-effect`);
+        const effect = requestedEffect ?? this._settings.get_string(effectiveKey(this._settings, prefix, 'effect'));
         for (const [name] of EFFECTS)
             state.livePreview.surface.remove_css_class(`effect-${name}`);
         state.livePreview.surface.add_css_class(`effect-${effect}`);
         const effectLabel = this._(EFFECTS.find(([name]) => name === effect)?.[1] ?? '原始');
-        const opacity = this._settings.get_int(`${prefix}-opacity`);
-        const radius = this._settings.get_int(`${prefix}-blur-radius`);
+        const opacity = this._settings.get_int(effectiveKey(this._settings, prefix, 'opacity'));
+        const radius = this._settings.get_int(effectiveKey(this._settings, prefix, 'blur-radius'));
         state.livePreview.value.set_label(
             effect === 'blur' || effect === 'glass'
                 ? `${effectLabel} · ${radius} px · ${opacity}%`
@@ -566,7 +565,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         page.add(heroGroup);
 
         const info = new Adw.PreferencesGroup();
-        info.add(this._infoRow(_('版本'), '1.0.7'));
+        info.add(this._infoRow(_('版本'), this.metadata['version-name']));
         info.add(this._infoRow(_('作者'), 'Real April'));
         const emailRow = new Adw.ActionRow({title: _('邮箱')});
         emailRow.add_suffix(new Gtk.LinkButton({
@@ -594,7 +593,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
     }
 
     _scaleRow(prefix, suffix, title, min, max, step, unit, statusRow) {
-        const key = `${prefix}-${suffix}`;
+        const key = () => effectiveKey(this._settings, prefix, suffix);
         const row = new Adw.ActionRow({title});
         const box = new Gtk.Box({
             spacing: 10,
@@ -605,7 +604,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             upper: max,
             step_increment: step,
             page_increment: Math.max(step, Math.round((max - min) / 10)),
-            value: this._settings.get_int(key),
+            value: this._settings.get_int(key()),
         });
         const scale = new Gtk.Scale({
             orientation: Gtk.Orientation.HORIZONTAL,
@@ -615,7 +614,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         });
         scale.add_css_class('parameter-scale');
         const output = new Gtk.Label({
-            label: `${this._settings.get_int(key)} ${unit}`.trim(),
+            label: `${this._settings.get_int(key())} ${unit}`.trim(),
             width_chars: 6,
             xalign: 1,
         });
@@ -626,12 +625,12 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             output.set_label(`${value} ${unit}`.trim());
             if (syncing)
                 return;
-            this._settings.set_int(key, value);
+            this._settings.set_int(key(), value);
             this._refreshLivePreview(prefix);
             this._markPending(statusRow);
         });
-        const changedId = this._settings.connect(`changed::${key}`, () => {
-            const value = this._settings.get_int(key);
+        const changedId = watchEffectiveSetting(this._settings, prefix, suffix, () => {
+            const value = this._settings.get_int(key());
             output.set_label(`${value} ${unit}`.trim());
             if (Math.round(adjustment.get_value()) !== value) {
                 syncing = true;
@@ -652,10 +651,10 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
     }
 
     _colorRow(prefix, suffix, title, statusRow) {
-        const key = `${prefix}-${suffix}`;
+        const key = () => effectiveKey(this._settings, prefix, suffix);
         const row = new Adw.ActionRow({title});
         const rgba = new Gdk.RGBA();
-        rgba.parse(this._settings.get_string(key));
+        rgba.parse(this._settings.get_string(key()));
         const button = new Gtk.ColorButton({
             rgba,
             use_alpha: false,
@@ -664,13 +663,13 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         button.connect('color-set', widget => {
             const color = widget.rgba;
             const hex = `#${this._channel(color.red)}${this._channel(color.green)}${this._channel(color.blue)}`;
-            this._settings.set_string(key, hex);
+            this._settings.set_string(key(), hex);
             this._refreshLivePreview(prefix);
             this._markPending(statusRow);
         });
-        const changedId = this._settings.connect(`changed::${key}`, () => {
+        const changedId = watchEffectiveSetting(this._settings, prefix, suffix, () => {
             const updated = new Gdk.RGBA();
-            updated.parse(this._settings.get_string(key));
+            updated.parse(this._settings.get_string(key()));
             button.set_rgba(updated);
             this._refreshLivePreview(prefix);
         });
@@ -743,27 +742,14 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
             this._dockLinkStatus.label = status;
     }
 
-    _copyDockToApplication() {
-        for (const suffix of TARGET_SUFFIXES) {
-            const source = this._settings.get_value(`dock-${suffix}`);
-            this._settings.set_value(`app-${suffix}`, source);
-        }
+    _markPending() {
+        this._refreshApplyStatus();
     }
 
-    _markPending(statusRow) {
-        if (!statusRow)
-            return;
-        const existing = this._statusSources.get(statusRow);
-        if (existing)
-            GLib.Source.remove(existing);
-        statusRow.subtitle = this._('等待停止调整…');
-        const delay = this._settings.get_int('apply-delay');
-        const sourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
-            statusRow.subtitle = this._('设置已保存');
-            this._statusSources.delete(statusRow);
-            return GLib.SOURCE_REMOVE;
-        });
-        this._statusSources.set(statusRow, sourceId);
+    _refreshApplyStatus() {
+        const summary = runtimeSummary(this._settings, this._statusRequest, this._);
+        for (const row of this._statusRows)
+            row.subtitle = summary;
     }
 
     _exportPreset() {

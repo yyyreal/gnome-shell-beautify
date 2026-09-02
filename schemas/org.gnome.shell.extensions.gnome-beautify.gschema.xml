@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="org.gnome.shell.extensions.gnome-beautify" path="/org/gnome/shell/extensions/gnome-beautify/">
+    <key name="status-request" type="s"><default>''</default><summary>Preferences runtime status request token</summary></key>
+    <key name="runtime-status" type="s"><default>''</default><summary>Shell acknowledgement and per-target configuration status</summary></key>
     <key name="linked-targets" type="b"><default>true</default><summary>Link Dock and application bar settings</summary></key>
     <key name="show-indicator" type="b"><default>true</default><summary>Show the quick access icon in the Dock</summary></key>
     <key name="apply-delay" type="i"><range min="500" max="5000"/><default>2000</default><summary>Delay before applying changes in milliseconds</summary></key>

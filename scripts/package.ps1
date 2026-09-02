@@ -19,6 +19,7 @@ if ([string]::IsNullOrWhiteSpace($uuid) -or $uuid -notmatch '^[A-Za-z0-9._-]+@[A
 $requiredFiles = @(
     'extension.js',
     'blurSurface.js',
+    'appearanceConfig.js',
     'prefs.js',
     'i18n.js',
     'metadata.json',
@@ -57,7 +58,8 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'schemas') -Destination $stagePat
 
 $schemaCompiler = Get-Command glib-compile-schemas -ErrorAction SilentlyContinue
 if ($schemaCompiler) {
-    & $schemaCompiler.Source (Join-Path $stagePath 'schemas')
+    & $schemaCompiler.Source --strict (Join-Path $stagePath 'schemas')
+    if ($LASTEXITCODE -ne 0) { throw 'GSettings schema 编译失败。' }
 } else {
     $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
     if ($wsl) {
@@ -72,10 +74,16 @@ if ($schemaCompiler) {
     }
 }
 
+if (-not (Test-Path -LiteralPath (Join-Path $stagePath 'schemas\gschemas.compiled') -PathType Leaf)) {
+    throw '未生成 GSettings schema，请安装 glib-compile-schemas 或在 WSL 中提供该工具。'
+}
+
 node --check (Join-Path $stagePath 'extension.js')
 if ($LASTEXITCODE -ne 0) { throw 'extension.js 语法检查失败。' }
 node --check (Join-Path $stagePath 'blurSurface.js')
 if ($LASTEXITCODE -ne 0) { throw 'blurSurface.js 语法检查失败。' }
+node --check (Join-Path $stagePath 'appearanceConfig.js')
+if ($LASTEXITCODE -ne 0) { throw 'appearanceConfig.js 语法检查失败。' }
 node --check (Join-Path $stagePath 'prefs.js')
 if ($LASTEXITCODE -ne 0) { throw 'prefs.js 语法检查失败。' }
 node --check (Join-Path $stagePath 'i18n.js')

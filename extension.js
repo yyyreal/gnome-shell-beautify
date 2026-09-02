@@ -11,13 +11,10 @@ import * as Slider from 'resource:///org/gnome/shell/ui/slider.js';
 
 import {getTranslator} from './i18n.js';
 import {BackgroundBlurLayer, BLUR_EFFECT_NAME} from './blurSurface.js';
+import {TARGET_SUFFIXES as CONFIG_SUFFIXES, readSnapshot, snapshotKey} from './appearanceConfig.js';
 
 const QUICK_EFFECTS = ['original', 'transparent', 'blur'];
-const CONFIG_SUFFIXES = [
-    'effect', 'blur-radius', 'opacity', 'brightness', 'tint', 'color',
-    'gradient-start', 'gradient-end', 'gradient-direction',
-    'corner-radius', 'border-width', 'shadow-strength',
-];
+const RETRY_DELAYS = [300, 800, 1600];
 
 export default class GnomeBeautifyExtension extends Extension {
     enable() {
@@ -31,6 +28,14 @@ export default class GnomeBeautifyExtension extends Extension {
         this._ = getTranslator(this._settings);
         this._originalActors = new Map();
         this._blurSurfaces = new Map();
+        this._enabled = true;
+        this._targetStates = new Map();
+        this._missingTargets = new Set();
+        this._committedSnapshot = null;
+        this._revision = 0;
+        this._refreshSource = 0;
+        this._retrySource = 0;
+        this._retryAttempt = 0;
         this._applySource = 0;
         this._animationSource = 0;
         this._settingsChangedId = this._settings.connect('changed',
@@ -61,22 +66,28 @@ export default class GnomeBeautifyExtension extends Extension {
         });
         this._interfaceSignalIds = [
             this._interfaceSettings.connect('changed::color-scheme',
-                () => this._scheduleApply(true)),
+                () => this._queueRefresh()),
             this._interfaceSettings.connect('changed::gtk-theme',
-                () => this._scheduleApply(true)),
+                () => this._queueRefresh()),
         ];
         this._themeContext = St.ThemeContext.get_for_stage(global.stage);
         this._themeChangedId = this._themeContext.connect('changed',
-            () => this._scheduleApply(true));
+            () => this._queueRefresh());
 
         this._overviewAnimating = false;
         this._onBattery = false;
         this._setupPowerMonitor();
         this._syncIndicator();
-        this._applyEffects();
+        this._commitSettings();
     }
 
     disable() {
+        this._enabled = false;
+        for (const key of ['_refreshSource', '_retrySource']) {
+            if (this[key])
+                GLib.Source.remove(this[key]);
+            this[key] = 0;
+        }
         if (this._applySource) {
             GLib.Source.remove(this._applySource);
             this._applySource = 0;
@@ -124,23 +135,47 @@ export default class GnomeBeautifyExtension extends Extension {
 
         this._destroyIndicator();
         this._restoreActors();
+        this._publishStatus();
         this._originalActors = null;
         this._blurSurfaces = null;
+        this._targetStates = null;
+        this._committedSnapshot = null;
         this._settings = null;
         this._ = null;
     }
 
     _onSettingChanged(key) {
+        if (key === 'runtime-status')
+            return;
+        if (key === 'status-request') {
+            this._publishStatus();
+            return;
+        }
         if (key === 'language-mode') {
             this._ = getTranslator(this._settings);
             this._rebuildQuickMenu();
+            return;
         }
 
-        if (key === 'show-indicator')
+        if (key === 'show-indicator') {
             this._syncIndicator();
+            return;
+        }
+        if (key === 'remember-last')
+            return;
+        if (key === 'apply-delay') {
+            if (this._applySource)
+                this._scheduleApply();
+            return;
+        }
+        if (key.startsWith('app-') && this._settings.get_boolean('linked-targets'))
+            return;
 
         this._updateQuickMenu();
-        this._scheduleApply();
+        // Discrete choices are coalesced into the next main-loop turn. Only
+        // continuous appearance parameters use the user's debounce interval.
+        this._scheduleApply(key === 'linked-targets' || key.endsWith('-effect') ||
+            key === 'performance-protection' || key === 'battery-reduce');
     }
 
     _scheduleApply(immediate = false) {
@@ -149,32 +184,95 @@ export default class GnomeBeautifyExtension extends Extension {
             this._applySource = 0;
         }
 
-        if (immediate) {
-            this._applyEffects();
-            return;
-        }
-
-        const delay = this._settings.get_int('apply-delay');
+        const delay = immediate ? 0 : this._settings.get_int('apply-delay');
         this._applySource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
             this._applySource = 0;
-            this._applyEffects();
+            this._commitSettings();
+            return GLib.SOURCE_REMOVE;
+        });
+        this._publishStatus();
+    }
+
+    _commitSettings() {
+        if (this._applySource)
+            GLib.Source.remove(this._applySource);
+        this._applySource = 0;
+        if (this._refreshSource)
+            GLib.Source.remove(this._refreshSource);
+        this._refreshSource = 0;
+        if (this._retrySource)
+            GLib.Source.remove(this._retrySource);
+        this._retrySource = 0;
+        this._retryAttempt = 0;
+        this._committedSnapshot = readSnapshot(this._settings);
+        for (const record of this._originalActors.values()) {
+            record.repairAttempts = 0;
+            record.repairWindow = 0;
+        }
+        this._revision++;
+        this._applyEffects(this._committedSnapshot);
+    }
+
+    _queueRefresh() {
+        if (!this._enabled || !this._committedSnapshot || this._refreshSource)
+            return;
+        this._refreshSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+            this._refreshSource = 0;
+            // Never read a half-adjusted setting or cancel its debounce here.
+            this._applyEffects(this._committedSnapshot);
             return GLib.SOURCE_REMOVE;
         });
     }
 
+    _scheduleRetry() {
+        if (!this._enabled || this._retrySource || this._retryAttempt >= RETRY_DELAYS.length)
+            return;
+        this._retrySource = GLib.timeout_add(GLib.PRIORITY_DEFAULT,
+            RETRY_DELAYS[this._retryAttempt++], () => {
+                this._retrySource = 0;
+                this._applyEffects(this._committedSnapshot);
+                return GLib.SOURCE_REMOVE;
+            });
+    }
+
+    _publishStatus() {
+        if (!this._settings || this._applying)
+            return;
+        const targets = {};
+        for (const target of ['dock', 'app']) {
+            const states = [...(this._targetStates?.values() ?? [])]
+                .filter(item => item.target === target).map(item => item.state);
+            targets[target] = states.includes('failed') ? 'failed'
+                : this._missingTargets?.has(target) || !states.length ? 'missing'
+                    : states.includes('waiting') ? 'waiting'
+                        : states.includes('applied') ? 'applied' : 'hidden';
+        }
+        const status = JSON.stringify({
+            request: this._settings.get_string('status-request'),
+            active: this._enabled,
+            configKey: this._committedSnapshot ? snapshotKey(this._committedSnapshot) : '',
+            revision: this._revision,
+            pending: Boolean(this._applySource),
+            retrying: Boolean(this._retrySource),
+            targets,
+        });
+        if (this._settings.get_string('runtime-status') !== status)
+            this._settings.set_string('runtime-status', status);
+    }
+
     _beginOverviewAnimation() {
-        if (!this._settings.get_boolean('performance-protection'))
+        if (!this._committedSnapshot?.performanceProtection)
             return;
 
         this._overviewAnimating = true;
-        this._scheduleApply(true);
+        this._queueRefresh();
         if (this._animationSource)
             GLib.Source.remove(this._animationSource);
 
         this._animationSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 420, () => {
             this._animationSource = 0;
             this._overviewAnimating = false;
-            this._scheduleApply(true);
+            this._queueRefresh();
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -194,7 +292,7 @@ export default class GnomeBeautifyExtension extends Extension {
                 const previous = this._onBattery;
                 this._readBatteryState();
                 if (previous !== this._onBattery)
-                    this._scheduleApply(true);
+                    this._queueRefresh();
             });
         } catch (error) {
             console.debug(`${this.uuid}: UPower unavailable: ${error.message}`);
@@ -247,8 +345,12 @@ export default class GnomeBeautifyExtension extends Extension {
         this._indicatorSyncSource = GLib.timeout_add(
             GLib.PRIORITY_DEFAULT, delay, () => {
                 this._indicatorSyncSource = 0;
-                this._syncIndicator();
-                this._applyEffects();
+                try {
+                    this._syncIndicator();
+                } finally {
+                    this._retryAttempt = 0;
+                    this._queueRefresh();
+                }
                 return GLib.SOURCE_REMOVE;
             });
     }
@@ -345,7 +447,6 @@ export default class GnomeBeautifyExtension extends Extension {
             this._quickRadiusSlider = null;
             if (!this._destroyingIndicator) {
                 this._scheduleIndicatorSync();
-                this._scheduleApply();
             }
         });
         this._rebuildQuickMenu();
@@ -453,7 +554,8 @@ export default class GnomeBeautifyExtension extends Extension {
             const value = Math.round(min + slider.value * (max - min));
             valueLabel.text = formatter(value);
             this._settings.set_int(`dock-${settingKey.replace(/^dock-/, '')}`, value);
-            this._settings.set_int(`app-${settingKey.replace(/^dock-/, '')}`, value);
+            if (!this._settings.get_boolean('linked-targets'))
+                this._settings.set_int(`app-${settingKey.replace(/^dock-/, '')}`, value);
         });
 
         box.add_child(heading);
@@ -464,7 +566,8 @@ export default class GnomeBeautifyExtension extends Extension {
 
     _setQuickEffect(effect) {
         this._settings.set_string('dock-effect', effect);
-        this._settings.set_string('app-effect', effect);
+        if (!this._settings.get_boolean('linked-targets'))
+            this._settings.set_string('app-effect', effect);
         this._updateQuickMenu();
     }
 
@@ -491,16 +594,21 @@ export default class GnomeBeautifyExtension extends Extension {
         this._updatingQuickMenu = false;
     }
 
-    _applyEffects() {
+    _applyEffects(snapshot = this._committedSnapshot) {
+        if (!snapshot || !this._enabled)
+            return;
         const actors = [];
         if (Main.panel)
             actors.push(['dock', Main.panel, Main.layoutManager.panelBox]);
+        this._missingTargets.clear();
         for (const dock of this._findPersistentDocks()) {
             const background = dock.dash?._background ??
                 dock.dash?.get_children?.().find(child =>
                     child.has_style_class_name?.('dash-background'));
             if (background)
                 actors.push(['app', background, dock.dash]);
+            else
+                this._missingTargets.add('app');
         }
         const overviewDash = Main.overview.dash;
         if (overviewDash?._background) {
@@ -515,47 +623,164 @@ export default class GnomeBeautifyExtension extends Extension {
             actors.push(['app', overviewDash._background, anchor]);
         }
 
-        const linked = this._settings.get_boolean('linked-targets');
         const activeActors = new Set();
+        this._targetStates.clear();
+        const environment = {
+            isDark: this._isDarkTheme(),
+            animating: snapshot.performanceProtection && this._overviewAnimating,
+            battery: snapshot.batteryReduce && this._onBattery,
+        };
 
-        for (const [target, actor, anchor] of actors) {
-            if (!actor || activeActors.has(actor))
-                continue;
-            activeActors.add(actor);
-            this._captureActor(actor);
-            const prefix = target === 'app' && linked ? 'dock' : target;
-            this._applyActor(actor, prefix, anchor);
+        this._applying = true;
+        try {
+            for (const [target, actor, anchor] of actors) {
+                if (!actor || activeActors.has(actor))
+                    continue;
+                activeActors.add(actor);
+                const state = {target, state: 'waiting', configured: false};
+                this._targetStates.set(actor, state);
+                try {
+                    this._captureActor(actor);
+                    this._applyActor(actor, snapshot[target], anchor, environment);
+                    state.configured = true;
+                    state.state = this._actorState(actor);
+                } catch (error) {
+                    state.state = 'failed';
+                    console.warn(`${this.uuid}: ${target} background could not apply: ${error.message}`);
+                }
+            }
+            for (const target of ['dock', 'app']) {
+                if (![...this._targetStates.values()].some(item => item.target === target))
+                    this._missingTargets.add(target);
+            }
+            this._pruneActors(activeActors);
+        } finally {
+            this._applying = false;
         }
-        this._pruneActors(activeActors);
+        this._updateRetryState();
+    }
+
+    _actorState(actor) {
+        if (this._targetStates.get(actor)?.configured === false)
+            return 'failed';
+        const record = this._originalActors.get(actor);
+        if (record?.managed && actor.get_style() !== record.expectedStyle)
+            return 'failed';
+        if (!actor.is_mapped())
+            return 'hidden';
+        if (!actor.has_allocation())
+            return 'waiting';
+        return this._blurSurfaces.get(actor)?.state ?? 'applied';
+    }
+
+    _updateRetryState() {
+        if (this._applying)
+            return;
+        const needsRetry = this._missingTargets.size > 0 ||
+            [...this._targetStates.values()].some(item => ['failed', 'waiting'].includes(item.state));
+        if (needsRetry)
+            this._scheduleRetry();
+        else {
+            if (this._retrySource)
+                GLib.Source.remove(this._retrySource);
+            this._retrySource = 0;
+            this._retryAttempt = 0;
+        }
+        this._publishStatus();
     }
 
     _captureActor(actor) {
         if (this._originalActors.has(actor))
             return;
-        this._originalActors.set(actor, {
+        const record = {
             actor,
             style: actor.get_style(),
             clipToAllocation: actor.clip_to_allocation,
-        });
+            managed: false,
+            writing: false,
+            repairAttempts: 0,
+            repairWindow: 0,
+            signals: [],
+        };
+        this._originalActors.set(actor, record);
+        record.signals.push(actor.connect('notify::style', () => {
+            if (record.writing)
+                return;
+            if (!record.managed) {
+                record.style = actor.get_style();
+                return;
+            }
+            if (actor.get_style() === record.expectedStyle)
+                return;
+            record.style = actor.get_style();
+            const state = this._targetStates.get(actor);
+            if (state)
+                state.state = 'failed';
+            // Bound repairs if another style owner immediately undoes ours.
+            if (Date.now() - record.repairWindow > 2000) {
+                record.repairWindow = Date.now();
+                record.repairAttempts = 0;
+            }
+            if (++record.repairAttempts <= 3)
+                this._queueRefresh();
+            this._publishStatus();
+        }));
+        for (const signal of ['notify::mapped', 'notify::allocation']) {
+            record.signals.push(actor.connect(signal, () => {
+                const state = this._targetStates.get(actor);
+                if (!state)
+                    return;
+                // Non-blur effects also need accurate visibility/allocation
+                // status. Do not hide an earlier attachment failure here.
+                if (state.state !== 'failed')
+                    state.state = this._actorState(actor);
+                if (actor.is_mapped() && ['waiting', 'failed'].includes(state.state))
+                    this._queueRefresh();
+                this._updateRetryState();
+            }));
+        }
+        record.signals.push(actor.connect('destroy', () => {
+            this._removeBlurSurface(actor);
+            this._originalActors.delete(actor);
+            this._targetStates?.delete(actor);
+            this._queueRefresh();
+        }));
     }
 
-    _applyActor(actor, prefix, anchor) {
+    _writeActorStyle(actor, style) {
+        const record = this._originalActors.get(actor);
+        record.expectedStyle = style;
+        record.writing = true;
+        try {
+            if (actor.get_style() !== style)
+                actor.set_style(style);
+        } finally {
+            record.writing = false;
+        }
+        // A host theme handler may synchronously replace the style during
+        // notify::style. Keep its replacement for restoration, not our own.
+        if (record.managed && actor.get_style() !== style)
+            record.style = actor.get_style();
+    }
+
+    _applyActor(actor, config, anchor, environment) {
         this._removeBlur(actor);
-        const effect = this._settings.get_string(`${prefix}-effect`);
+        const effect = config.effect;
         const original = this._originalActors.get(actor);
+        original.managed = effect !== 'original';
         if (effect === 'original') {
             this._removeBlurSurface(actor);
-            actor.set_style(original?.style ?? null);
+            this._writeActorStyle(actor, original?.style ?? null);
             actor.clip_to_allocation = original?.clipToAllocation ?? false;
             return;
         }
 
-        const transparency = this._settings.get_int(`${prefix}-opacity`) / 100;
+        const transparency = config.opacity / 100;
         const backgroundAlpha = Math.max(0, 1 - transparency);
-        const corner = this._settings.get_int(`${prefix}-corner-radius`);
-        const border = this._settings.get_int(`${prefix}-border-width`);
-        const shadow = this._settings.get_int(`${prefix}-shadow-strength`) / 100;
-        const isDark = this._isDarkTheme();
+        const corner = config['corner-radius'];
+        const border = config['border-width'];
+        const shadow = config['shadow-strength'] / 100;
+        const {isDark} = environment;
         const base = original?.style ? `${original.style};` : '';
         const details = [
             `border-radius: ${corner}px`,
@@ -578,17 +803,17 @@ export default class GnomeBeautifyExtension extends Extension {
         }
 
         if (effect === 'solid')
-            details.push(`background-color: ${this._rgba(this._settings.get_string(`${prefix}-color`), backgroundAlpha)}`);
+            details.push(`background-color: ${this._rgba(config.color, backgroundAlpha)}`);
         else if (effect === 'gradient') {
-            const direction = this._settings.get_int(`${prefix}-gradient-direction`);
+            const direction = config['gradient-direction'];
             const orientation = direction >= 45 && direction < 225 ? 'horizontal' : 'vertical';
             details.push(
                 `background-gradient-direction: ${orientation}`,
-                `background-gradient-start: ${this._rgba(this._settings.get_string(`${prefix}-gradient-start`), backgroundAlpha)}`,
-                `background-gradient-end: ${this._rgba(this._settings.get_string(`${prefix}-gradient-end`), backgroundAlpha)}`);
+                `background-gradient-start: ${this._rgba(config['gradient-start'], backgroundAlpha)}`,
+                `background-gradient-end: ${this._rgba(config['gradient-end'], backgroundAlpha)}`);
         } else if (effect === 'blur' || effect === 'glass') {
             const tint = effect === 'glass'
-                ? this._settings.get_int(`${prefix}-tint`) / 100
+                ? config.tint / 100
                 : 0;
             const neutral = isDark ? [48, 46, 56] : [238, 238, 244];
             const glassTint = isDark ? [102, 82, 126] : [176, 158, 202];
@@ -605,13 +830,13 @@ export default class GnomeBeautifyExtension extends Extension {
                     'box-shadow: none');
             }
 
-            let radius = this._settings.get_int(`${prefix}-blur-radius`);
+            let radius = config['blur-radius'];
             let brightness = effect === 'glass'
                 ? 1
-                : this._settings.get_int(`${prefix}-brightness`) / 100;
-            if (this._overviewAnimating)
+                : config.brightness / 100;
+            if (environment.animating)
                 radius = Math.round(radius * 0.55);
-            if (this._onBattery && this._settings.get_boolean('battery-reduce')) {
+            if (environment.battery) {
                 radius = Math.round(radius * 0.65);
                 if (effect === 'blur')
                     brightness = Math.min(brightness, 0.92);
@@ -623,7 +848,7 @@ export default class GnomeBeautifyExtension extends Extension {
         if ((effect !== 'blur' && effect !== 'glass') || backgroundAlpha <= 0.001)
             this._removeBlurSurface(actor);
 
-        actor.set_style(`${base}${details.join(';')};`);
+        this._writeActorStyle(actor, `${base}${details.join(';')};`);
     }
 
     _ensureBlurSurface(actor, anchor, radius, brightness, corner) {
@@ -633,22 +858,27 @@ export default class GnomeBeautifyExtension extends Extension {
             layer = null;
         }
 
-        try {
-            if (!layer) {
-                layer = new BackgroundBlurLayer(actor, anchor,
-                    global.compositor.get_laters(), destroyedLayer => {
-                        if (this._blurSurfaces?.get(actor) === destroyedLayer) {
-                            this._blurSurfaces.delete(actor);
-                            this._scheduleIndicatorSync();
-                        }
-                    });
-                this._blurSurfaces.set(actor, layer);
-            }
-            layer.update(radius, brightness, corner);
-        } catch (error) {
-            this._removeBlurSurface(actor);
-            console.warn(`${this.uuid}: background blur could not attach: ${error.message}`);
+        if (!layer) {
+            layer = new BackgroundBlurLayer(actor, anchor,
+                global.compositor.get_laters(), destroyedLayer => {
+                    if (this._blurSurfaces?.get(actor) === destroyedLayer) {
+                        this._blurSurfaces.delete(actor);
+                        const state = this._targetStates.get(actor);
+                        if (state)
+                            state.state = 'waiting';
+                        this._queueRefresh();
+                    }
+                }, (updatedLayer, state) => {
+                    const targetState = this._targetStates?.get(actor);
+                    if (targetState && this._blurSurfaces?.get(actor) === updatedLayer) {
+                        targetState.state = !targetState.configured ? 'failed'
+                            : state === 'applied' ? this._actorState(actor) : state;
+                        this._updateRetryState();
+                    }
+                });
+            this._blurSurfaces.set(actor, layer);
         }
+        layer.update(radius, brightness, corner);
     }
 
     _removeBlurSurface(actor) {
@@ -665,6 +895,9 @@ export default class GnomeBeautifyExtension extends Extension {
                 continue;
             this._removeBlurSurface(actor);
             try {
+                original.managed = false;
+                for (const id of original.signals)
+                    actor.disconnect(id);
                 this._removeBlur(actor);
                 actor.set_style(original.style ?? null);
                 actor.clip_to_allocation = original.clipToAllocation;
@@ -705,8 +938,12 @@ export default class GnomeBeautifyExtension extends Extension {
     _restoreActors() {
         for (const actor of [...(this._blurSurfaces?.keys() ?? [])])
             this._removeBlurSurface(actor);
-        for (const {actor, style, clipToAllocation} of this._originalActors?.values() ?? []) {
+        for (const record of this._originalActors?.values() ?? []) {
+            const {actor, style, clipToAllocation} = record;
             try {
+                record.managed = false;
+                for (const id of record.signals)
+                    actor.disconnect(id);
                 this._removeBlur(actor);
                 actor.set_style(style ?? null);
                 actor.clip_to_allocation = clipToAllocation;
@@ -714,5 +951,6 @@ export default class GnomeBeautifyExtension extends Extension {
                 console.debug(`${this.uuid}: actor already unavailable: ${error.message}`);
             }
         }
+        this._originalActors?.clear();
     }
 }
