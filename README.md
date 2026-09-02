@@ -21,7 +21,7 @@ GNOME Shell 46–51。扩展仅面向 GNOME 46 及以上版本。
 ## 安装
 
 ```bash
-gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.9.zip --force
+gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.10.zip --force
 ```
 
 注销并重新登录后启用：
@@ -29,6 +29,12 @@ gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.9.zip --force
 ```bash
 gnome-extensions enable gnome-beautify@yyyreal.github.com
 ```
+
+## 1.0.10 项目主页更新
+
+- 项目主页统一更新为 <https://github.com/yyyreal/gnome-shell-beautify>，同步扩展元数据、关于页面、文档和 HTML 原型链接。
+- 关于页面直接读取扩展元数据中的主页地址，避免显示文字与实际链接不一致。
+- 扩展 UUID、GSettings schema 和预设格式保持不变，已有安装与设置不受仓库改名影响。
 
 ## 1.0.9 概览退出闪黑修复
 
@@ -80,5 +86,5 @@ gnome-extensions enable gnome-beautify@yyyreal.github.com
 ## 作者
 
 - Real April
-- GitHub: <https://github.com/yyyreal/gnome-beautify.git>
+- GitHub: <https://github.com/yyyreal/gnome-shell-beautify>
 - 邮箱：<c070533@qq.com>

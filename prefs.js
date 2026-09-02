@@ -576,9 +576,10 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         info.add(emailRow);
         info.add(this._infoRow(_('本地化'), '中文 / English'));
         const githubRow = new Adw.ActionRow({title: _('项目主页')});
+        const homepage = this.metadata.url;
         githubRow.add_suffix(new Gtk.LinkButton({
-            label: 'github.com/yyyreal/gnome-beautify.git ↗',
-            uri: 'https://github.com/yyyreal/gnome-beautify.git',
+            label: `${homepage.replace(/^https?:\/\//, '')} ↗`,
+            uri: homepage,
             valign: Gtk.Align.CENTER,
         }));
         info.add(githubRow);

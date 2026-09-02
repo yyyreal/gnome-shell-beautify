@@ -123,6 +123,8 @@ class Settings extends Actor {
 }
 
 class Widget extends Actor {
+    static new_from_file(path) { return new Widget({path}); }
+    set_pixel_size(size) { this.pixel_size = size; }
     append(child) { this.add_child(child); }
     add(child) { this.add_child(child); }
     add_suffix(child) { this.add_child(child); }
@@ -197,9 +199,9 @@ async function fixture() {
     const Meta = {BackgroundGroup: Actor, LaterType: {BEFORE_REDRAW: 'BEFORE_REDRAW'}};
     const St = {Widget: Actor};
     const Gtk = Object.fromEntries(['Box', 'Label', 'Image', 'Button', 'ToggleButton', 'FlowBox',
-        'Scale', 'Adjustment', 'ColorButton'].map(name => [name, Widget]));
+        'Scale', 'Adjustment', 'ColorButton', 'LinkButton'].map(name => [name, Widget]));
     Object.assign(Gtk, {Orientation: {HORIZONTAL: 0, VERTICAL: 1}, Align: {CENTER: 0, START: 1},
-        SelectionMode: {NONE: 0}});
+        SelectionMode: {NONE: 0}, Justification: {CENTER: 0}});
     const Adw = Object.fromEntries(['ActionRow', 'PreferencesPage', 'PreferencesGroup']
         .map(name => [name, Widget]));
     const Gdk = {RGBA: class { parse(value) { this.value = value; } }};
@@ -1063,4 +1065,27 @@ test('概览重复刷新相同参数不重复写入或重建效果，原始模�
     assert.equal(f.extension._blurSurfaces.has(f.panel), false);
     f.extension.disable();
     assert.equal(f.panel.style, null);
+});
+
+test('项目主页、版本元数据和关于页面链接保持一致，扩展身份不变', async () => {
+    const metadata = JSON.parse(await readFile(new URL('../metadata.json', import.meta.url), 'utf8'));
+    const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
+    assert.equal(metadata.url, 'https://github.com/yyyreal/gnome-shell-beautify');
+    assert.equal(manifest.homepage, metadata.url);
+    assert.equal(manifest.version, metadata['version-name']);
+    assert.equal(metadata.uuid, 'gnome-beautify@yyyreal.github.com');
+    assert.equal(manifest.uuid, metadata.uuid);
+    assert.equal(metadata['settings-schema'], 'org.gnome.shell.extensions.gnome-beautify');
+    const f = await fixture();
+    f.prefs.metadata = metadata;
+    const page = f.prefs._buildAboutPage();
+    const homepageRow = findWidget(page, widget => widget.title === '项目主页');
+    const link = findWidget(homepageRow, widget => Boolean(widget.uri));
+    assert.equal(link.uri, metadata.url);
+    assert.equal(link.label, 'github.com/yyyreal/gnome-shell-beautify ↗');
+    assert.ok(findWidget(page, widget => widget.label === manifest.version));
+    for (const relative of ['../README.md', '../prototype/index.html']) {
+        const content = await readFile(new URL(relative, import.meta.url), 'utf8');
+        assert.ok(content.includes(metadata.url), `${relative} must reference the current homepage`);
+    }
 });
