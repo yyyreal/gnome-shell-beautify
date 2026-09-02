@@ -83,13 +83,21 @@ export class BackgroundBlurLayer {
     update(radius, brightness, corner) {
         if (this.destroyed)
             return;
-        this.surface.set_style([
+        const style = [
             'background-color: rgba(0,0,0,0)',
             `border-radius: ${corner}px`,
             'border-width: 0px',
             'box-shadow: none',
-        ].join(';') + ';');
+            'transition-duration: 0ms',
+        ].join(';') + ';';
+        const styleChanged = this.surface.get_style() !== style;
+        if (styleChanged)
+            this.surface.set_style(style);
         let blur = this.surface.get_effect(BLUR_EFFECT_NAME);
+        const radiusChanged = this._parameters?.radius !== radius;
+        const brightnessChanged = this._parameters?.brightness !== brightness;
+        const retry = this.state === 'failed';
+        const changed = !blur || radiusChanged || brightnessChanged || styleChanged || retry;
         if (!blur) {
             blur = new Shell.BlurEffect({
                 mode: Shell.BlurMode.BACKGROUND,
@@ -98,11 +106,16 @@ export class BackgroundBlurLayer {
             });
             this.surface.add_effect_with_name(BLUR_EFFECT_NAME, blur);
         } else {
-            blur.radius = radius;
-            blur.brightness = brightness;
+            if (radiusChanged || retry)
+                blur.radius = radius;
+            if (brightnessChanged || retry)
+                blur.brightness = brightness;
         }
-        blur.queue_repaint();
-        this._setState('waiting');
+        if (changed) {
+            blur.queue_repaint();
+            this._setState('waiting');
+        }
+        this._parameters = {radius, brightness};
         this._queueSync();
     }
 

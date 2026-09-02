@@ -191,7 +191,7 @@ async function fixture() {
             return id;
         },
     };
-    const Main = {panel, uiGroup, layoutManager: {panelBox, overviewGroup}, overview: {dash}};
+    const Main = {panel, uiGroup, layoutManager: {panelBox, overviewGroup}, overview: new Actor({dash})};
     const context = vm.createContext({console, global: {stage, compositor: {get_laters: () => laters}}});
     const Clutter = {FixedLayout: class FixedLayout {}, ActorAlign: {START: 'START'}};
     const Meta = {BackgroundGroup: Actor, LaterType: {BEFORE_REDRAW: 'BEFORE_REDRAW'}};
@@ -272,6 +272,8 @@ async function fixture() {
     extension._retryAttempt = 0;
     extension._retrySource = 0;
     extension._refreshSource = 0;
+    extension._frameRefreshId = 0;
+    extension._connectOverviewSignals();
     extension._isDarkTheme = () => true;
     extension._scheduleIndicatorSync = () => {};
     const prefsModule = new vm.SourceTextModule(
@@ -604,11 +606,11 @@ test('主题、概览、重建同步均不能抢先提交拖动中的参数或�
     assert.equal(f.extension._committedSnapshot.dock['blur-radius'], 34);
     assert.equal(f.extension._applySource, applyId);
     f.extension._beginOverviewAnimation();
-    fireTimer(f, f.extension._refreshSource);
+    f.laters.flush();
     const blur = f.extension._blurSurfaces.get(f.panel).surface.get_effect(f.BLUR_EFFECT_NAME);
     assert.equal(blur.radius, Math.round(34 * 0.55));
-    fireTimer(f, f.extension._animationSource);
-    fireTimer(f, f.extension._refreshSource);
+    f.Main.overview.emit('shown');
+    f.laters.flush();
     f.extension._scheduleIndicatorSync = Object.getPrototypeOf(f.extension)._scheduleIndicatorSync;
     f.extension._syncIndicator = () => {};
     f.extension._scheduleIndicatorSync();
@@ -689,7 +691,7 @@ test('系统重写Dash样式后恢复已提交配置，不偷读待应用参数�
     const hostStyle = 'background-color: rgb(0,0,0);';
     f.background.set_style(hostStyle);
     assert.equal(f.runtime().targets.app, 'failed');
-    fireTimer(f, f.extension._refreshSource);
+    f.laters.flush();
     f.laters.flush();
     assert.ok(f.background.style.includes('0.38'));
     assert.equal(f.extension._committedSnapshot.dock.opacity, 62);
@@ -824,7 +826,7 @@ test('多屏应用栏共用联动快照，任何一屏失败都不能报告全�
     assert.deepEqual(f.runtime().targets, {dock: 'applied', app: 'applied'});
 });
 
-test('实际disable取消待应用、刷新、重试和动画，销毁全部信号与背景层', async () => {
+test('实际disable取消待应用、刷新、重试和绘制前回调，销毁全部信号与背景层', async () => {
     const f = await fixture();
     f.values['performance-protection'] = true;
     f.extension._commitSettings();
@@ -837,7 +839,9 @@ test('实际disable取消待应用、刷新、重试和动画，销毁全部信�
     f.extension._scheduleIndicatorSync = Object.getPrototypeOf(f.extension)._scheduleIndicatorSync;
     f.extension._scheduleIndicatorSync();
     assert.ok(f.extension._retrySource);
-    assert.ok(f.timers.size >= 4);
+    assert.ok(f.timers.size >= 3);
+    f.extension._queueFrameRefresh();
+    assert.ok(f.extension._frameRefreshId);
     f.extension.disable();
     assert.equal(f.timers.size, 0);
     assert.equal(f.laters.callbacks.size, 0);
@@ -845,6 +849,7 @@ test('实际disable取消待应用、刷新、重试和动画，销毁全部信�
     assert.equal(f.panel.signals.size, 0);
     assert.equal(f.background.signals.size, 0);
     assert.equal(f.dash.signals.size, 0);
+    assert.equal(f.Main.overview.signals.size, 0);
     assert.equal(f.runtime().active, false);
     assert.equal(f.panel.style, null);
     assert.equal(f.background.style, null);
@@ -927,4 +932,135 @@ test('36种效果切换路径：联动同时提交并清除上一种效果的模
             assert.equal(f.timers.size, 0);
         }
     }
+});
+
+test('GNOME退出概览清空panel.style后，下一次绘制前必须恢复而不是等待50ms', async () => {
+    for (const protection of [false, true]) {
+        const f = await fixture();
+        f.values['performance-protection'] = protection;
+        f.extension._commitSettings();
+        f.laters.flush();
+        const style = f.panel.style;
+        const layer = f.extension._blurSurfaces.get(f.panel);
+        f.extension._beginOverviewAnimation();
+        // GNOME 50 Overview._hideDone() clears this after emitting 'hidden'.
+        f.panel.set_style(null);
+        f.laters.flush();
+        assert.equal(f.panel.style, style, 'Default black panel must not reach the next paint');
+        assert.equal(f.extension._blurSurfaces.get(f.panel), layer);
+        assert.equal(layer.surface.visible, true);
+        assert.equal(f.extension._refreshSource, 0);
+        f.extension.disable();
+    }
+});
+
+test('概览生命周期信号驱动性能保护：开关反复切换不抢先提交滑块，也不重建模糊层', async () => {
+    for (const protection of [false, true]) {
+        for (const effect of ['blur', 'glass']) {
+            const f = await fixture();
+            Object.assign(f.values, {'linked-targets': true, 'performance-protection': protection,
+                'dock-effect': effect, 'dock-blur-radius': 60});
+            f.extension._commitSettings();
+            f.laters.flush();
+            const revision = f.extension._revision;
+            const layers = [f.panel, f.background].map(actor => f.extension._blurSurfaces.get(actor));
+            const blurs = layers.map(layer => layer.surface.get_effect(f.BLUR_EFFECT_NAME));
+            const style = f.panel.style;
+            f.settings.set_int('dock-blur-radius', 80);
+            const applyId = f.extension._applySource;
+            for (let iteration = 0; iteration < 5; iteration++) {
+                for (const [signal, animating] of [['showing', true], ['shown', false],
+                    ['hiding', true], ['hidden', false]]) {
+                    f.Main.overview.emit(signal);
+                    if (signal === 'hidden')
+                        f.panel.set_style(null); // Shell resets after the signal.
+                    f.laters.flush();
+                    f.laters.flush();
+                    assert.equal(f.extension._overviewAnimating, animating);
+                    const radius = protection && animating ? 33 : 60;
+                    for (const blur of blurs)
+                        assert.equal(blur.radius, radius);
+                    assert.equal(f.panel.style, style);
+                    assert.equal(f.extension._revision, revision);
+                    assert.equal(f.extension._applySource, applyId);
+                    assert.equal(f.extension._refreshSource, 0);
+                    assert.equal(f.extension._blurSurfaces.get(f.panel), layers[0]);
+                    assert.equal(f.extension._blurSurfaces.get(f.background), layers[1]);
+                    assert.ok(layers.every(layer => layer.surface.visible && !layer.destroyed));
+                    assert.deepEqual([...f.timers.values()].map(timer => timer.delay), [2000]);
+                }
+            }
+            fireTimer(f, applyId);
+            f.laters.flush();
+            assert.ok(blurs.every(blur => blur.radius === 80));
+            assert.equal(f.extension._revision, revision + 1);
+            f.extension.disable();
+        }
+    }
+});
+
+test('关闭动画或手势反向时同一帧只刷新一次，状态以最后一个概览信号为准', async () => {
+    const f = await fixture();
+    f.values['performance-protection'] = true;
+    f.extension._commitSettings();
+    f.laters.flush();
+    const applyEffects = f.extension._applyEffects.bind(f.extension);
+    let refreshes = 0;
+    f.extension._applyEffects = snapshot => { refreshes++; applyEffects(snapshot); };
+    const blur = f.extension._blurSurfaces.get(f.panel).surface.get_effect(f.BLUR_EFFECT_NAME);
+    for (const signals of [
+        ['showing', 'shown', 'hiding', 'hidden'],
+        ['showing', 'hiding', 'hidden', 'showing'],
+    ]) {
+        const before = refreshes;
+        for (const signal of signals)
+            f.Main.overview.emit(signal);
+        f.panel.set_style(null);
+        assert.equal(f.laters.callbacks.size, 1);
+        f.laters.flush();
+        f.laters.flush();
+        assert.equal(refreshes, before + 1);
+        const animating = signals.at(-1) === 'showing';
+        assert.equal(f.extension._overviewAnimating, animating);
+        assert.equal(blur.radius, animating ? Math.round(34 * 0.55) : 34);
+        assert.match(f.panel.style, /transition-duration: 0ms/);
+        assert.equal(f.timers.size, 0);
+    }
+    f.extension.disable();
+    f.Main.overview.emit('hidden');
+    assert.equal(f.laters.callbacks.size, 0);
+});
+
+test('概览重复刷新相同参数不重复写入或重建效果，原始模式保留系统过渡', async () => {
+    const f = await fixture();
+    const hostStyle = 'transition-duration: 250ms;background-color: black;';
+    f.panel.set_style(hostStyle);
+    f.extension._commitSettings();
+    f.laters.flush();
+    const layer = f.extension._blurSurfaces.get(f.panel);
+    const blur = layer.surface.get_effect(f.BLUR_EFFECT_NAME);
+    const repaints = blur.repaints;
+    let styleWrites = 0;
+    layer.surface.connect('notify::style', () => styleWrites++);
+    for (const signal of ['showing', 'shown', 'hiding', 'hidden']) {
+        f.Main.overview.emit(signal); // Protection is off in this fixture.
+        f.laters.flush();
+        f.laters.flush();
+        assert.equal(f.extension._blurSurfaces.get(f.panel), layer);
+        assert.equal(blur.repaints, repaints);
+        assert.equal(styleWrites, 0);
+        assert.equal(f.runtime().targets.dock, 'applied');
+    }
+    assert.match(f.panel.style, /transition-duration: 0ms/);
+    f.values['dock-effect'] = 'original';
+    f.extension._commitSettings();
+    assert.equal(f.panel.style, hostStyle);
+    f.Main.overview.emit('hiding');
+    f.Main.overview.emit('hidden');
+    f.panel.set_style(null);
+    f.laters.flush();
+    assert.equal(f.panel.style, null, 'Original mode must not fight Shell styling');
+    assert.equal(f.extension._blurSurfaces.has(f.panel), false);
+    f.extension.disable();
+    assert.equal(f.panel.style, null);
 });

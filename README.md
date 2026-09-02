@@ -21,7 +21,7 @@ GNOME Shell 46–51。扩展仅面向 GNOME 46 及以上版本。
 ## 安装
 
 ```bash
-gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.8.zip --force
+gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.9.zip --force
 ```
 
 注销并重新登录后启用：
@@ -29,6 +29,18 @@ gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.8.zip --force
 ```bash
 gnome-extensions enable gnome-beautify@yyyreal.github.com
 ```
+
+## 1.0.9 概览退出闪黑修复
+
+- GNOME 退出概览时会在发出 `hidden` 信号后清空顶部栏内联样式。旧版延迟 50 毫秒恢复，使系统默认背景有机会被绘制；现在将样式修复与概览信号合并到下一次绘制前，仍只使用已提交配置。
+- 自定义背景关闭主题的背景过渡，避免恢复样式后继续从默认黑色渐变；选择“原始”或禁用扩展时恢复系统样式，不修改全局动画设置。
+- 性能保护改用 `showing / shown / hiding / hidden` 生命周期，不再固定等待 420 毫秒后恢复半径，适应快速切换、手势反向和关闭动画。
+- 保留现有模糊层；参数未变化时不重复写入模糊参数、样式或请求效果重绘。
+- 31 项自动测试通过。新增测试复现退出概览后的样式清空，覆盖性能保护开关、模糊/磨砂、连续切换、同帧反向、待应用参数隔离及原始样式恢复。测试依然是模拟环境，未替代 GNOME 50 实机图形验证。
+
+依据：[GNOME 50 概览退出代码](https://github.com/GNOME/gnome-shell/blob/50.0/js/ui/overview.js#L538-L555)、[顶部栏背景过渡](https://github.com/GNOME/gnome-shell/blob/50.0/data/theme/gnome-shell-sass/widgets/_panel.scss#L9-L16)。
+
+实机复核：安装后注销重新登录，在模糊或磨砂效果下连续打开、关闭左上角概览；分别开启和关闭性能保护，检查顶部栏不闪出默认黑底，动画完成后半径恢复，且滑块调整的延迟保持不变。
 
 ## 1.0.8 联动修复与验证
 

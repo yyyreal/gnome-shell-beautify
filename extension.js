@@ -1,5 +1,6 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
 import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -34,17 +35,14 @@ export default class GnomeBeautifyExtension extends Extension {
         this._committedSnapshot = null;
         this._revision = 0;
         this._refreshSource = 0;
+        this._frameRefreshId = 0;
         this._retrySource = 0;
         this._retryAttempt = 0;
         this._applySource = 0;
-        this._animationSource = 0;
         this._settingsChangedId = this._settings.connect('changed',
             (_settings, key) => this._onSettingChanged(key));
 
-        this._overviewSignalIds = [
-            Main.overview.connect('showing', () => this._beginOverviewAnimation()),
-            Main.overview.connect('hiding', () => this._beginOverviewAnimation()),
-        ];
+        this._connectOverviewSignals();
         this._extensionStateChangedId = Main.extensionManager.connect(
             'extension-state-changed', () => this._scheduleIndicatorSync());
         this._monitorsChangedId = Main.layoutManager.connect(
@@ -74,7 +72,7 @@ export default class GnomeBeautifyExtension extends Extension {
         this._themeChangedId = this._themeContext.connect('changed',
             () => this._queueRefresh());
 
-        this._overviewAnimating = false;
+        this._overviewAnimating = Boolean(Main.overview.animationInProgress);
         this._onBattery = false;
         this._setupPowerMonitor();
         this._syncIndicator();
@@ -92,10 +90,7 @@ export default class GnomeBeautifyExtension extends Extension {
             GLib.Source.remove(this._applySource);
             this._applySource = 0;
         }
-        if (this._animationSource) {
-            GLib.Source.remove(this._animationSource);
-            this._animationSource = 0;
-        }
+        this._cancelFrameRefresh();
 
         if (this._settingsChangedId)
             this._settings.disconnect(this._settingsChangedId);
@@ -200,6 +195,7 @@ export default class GnomeBeautifyExtension extends Extension {
         if (this._refreshSource)
             GLib.Source.remove(this._refreshSource);
         this._refreshSource = 0;
+        this._cancelFrameRefresh();
         if (this._retrySource)
             GLib.Source.remove(this._retrySource);
         this._retrySource = 0;
@@ -214,7 +210,7 @@ export default class GnomeBeautifyExtension extends Extension {
     }
 
     _queueRefresh() {
-        if (!this._enabled || !this._committedSnapshot || this._refreshSource)
+        if (!this._enabled || !this._committedSnapshot || this._refreshSource || this._frameRefreshId)
             return;
         this._refreshSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
             this._refreshSource = 0;
@@ -222,6 +218,30 @@ export default class GnomeBeautifyExtension extends Extension {
             this._applyEffects(this._committedSnapshot);
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    _cancelFrameRefresh() {
+        if (this._frameRefreshId)
+            global.compositor.get_laters().remove(this._frameRefreshId);
+        this._frameRefreshId = 0;
+    }
+
+    _queueFrameRefresh() {
+        if (!this._enabled || !this._committedSnapshot || this._frameRefreshId)
+            return;
+        // Overview._hideDone() clears Main.panel.style *after* 'hidden'.
+        // Coalesce that reset with lifecycle events before the next paint,
+        // otherwise the default black panel is visible during our 50ms timer.
+        if (this._refreshSource)
+            GLib.Source.remove(this._refreshSource);
+        this._refreshSource = 0;
+        this._frameRefreshId = global.compositor.get_laters().add(
+            Meta.LaterType.BEFORE_REDRAW, () => {
+                this._frameRefreshId = 0;
+                if (this._enabled)
+                    this._applyEffects(this._committedSnapshot);
+                return false;
+            });
     }
 
     _scheduleRetry() {
@@ -260,21 +280,25 @@ export default class GnomeBeautifyExtension extends Extension {
             this._settings.set_string('runtime-status', status);
     }
 
+    _connectOverviewSignals() {
+        this._overviewSignalIds = [
+            Main.overview.connect('showing', () => this._beginOverviewAnimation()),
+            Main.overview.connect('hiding', () => this._beginOverviewAnimation()),
+            Main.overview.connect('shown', () => this._endOverviewAnimation()),
+            Main.overview.connect('hidden', () => this._endOverviewAnimation()),
+        ];
+    }
+
     _beginOverviewAnimation() {
-        if (!this._committedSnapshot?.performanceProtection)
-            return;
-
         this._overviewAnimating = true;
-        this._queueRefresh();
-        if (this._animationSource)
-            GLib.Source.remove(this._animationSource);
+        this._queueFrameRefresh();
+    }
 
-        this._animationSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 420, () => {
-            this._animationSource = 0;
-            this._overviewAnimating = false;
-            this._queueRefresh();
-            return GLib.SOURCE_REMOVE;
-        });
+    _endOverviewAnimation() {
+        this._overviewAnimating = false;
+        // Also refresh when protection is off: Shell resets panel styling
+        // independently of that preference. Never commit pending drag values.
+        this._queueFrameRefresh();
     }
 
     _setupPowerMonitor() {
@@ -722,7 +746,7 @@ export default class GnomeBeautifyExtension extends Extension {
                 record.repairAttempts = 0;
             }
             if (++record.repairAttempts <= 3)
-                this._queueRefresh();
+                this._queueFrameRefresh();
             this._publishStatus();
         }));
         for (const signal of ['notify::mapped', 'notify::allocation']) {
@@ -784,6 +808,9 @@ export default class GnomeBeautifyExtension extends Extension {
         const base = original?.style ? `${original.style};` : '';
         const details = [
             `border-radius: ${corner}px`,
+            // Only our managed backgrounds opt out of the theme's 250ms
+            // transition to/from its default black panel. Original restores it.
+            'transition-duration: 0ms',
         ];
         actor.clip_to_allocation = effect === 'blur' || effect === 'glass';
 
