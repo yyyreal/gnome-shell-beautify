@@ -48,11 +48,11 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         this._loadCss(window);
 
         const pages = [
-            ['general', _('通用'), 'preferences-system-symbolic', this._buildGeneralPage()],
+            ['general', this._('通用'), 'preferences-system-symbolic', this._buildGeneralPage()],
             ['dock', 'Dock', 'computer-symbolic', this._buildAppearancePage('dock')],
-            ['app', _('应用程序栏'), 'view-app-grid-symbolic', this._buildAppearancePage('app')],
-            ['advanced', _('高级'), 'applications-engineering-symbolic', this._buildAdvancedPage()],
-            ['about', _('关于'), 'help-about-symbolic', this._buildAboutPage()],
+            ['app', this._('应用程序栏'), 'view-app-grid-symbolic', this._buildAppearancePage('app')],
+            ['advanced', this._('高级'), 'applications-engineering-symbolic', this._buildAdvancedPage()],
+            ['about', this._('关于'), 'help-about-symbolic', this._buildAboutPage()],
         ];
         window.set_content(this._buildWindowLayout(pages));
 
@@ -566,7 +566,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         page.add(heroGroup);
 
         const info = new Adw.PreferencesGroup();
-        info.add(this._infoRow(_('版本'), '1.0.4'));
+        info.add(this._infoRow(_('版本'), '1.0.5'));
         info.add(this._infoRow(_('作者'), 'Real April'));
         const emailRow = new Adw.ActionRow({title: _('邮箱')});
         emailRow.add_suffix(new Gtk.LinkButton({
