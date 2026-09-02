@@ -1,7 +1,5 @@
-import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -12,8 +10,8 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Slider from 'resource:///org/gnome/shell/ui/slider.js';
 
 import {getTranslator} from './i18n.js';
+import {BackgroundBlurLayer, BLUR_EFFECT_NAME} from './blurSurface.js';
 
-const BLUR_EFFECT_NAME = 'gnome-beautify-background-blur';
 const QUICK_EFFECTS = ['original', 'transparent', 'blur'];
 const CONFIG_SUFFIXES = [
     'effect', 'blur-radius', 'opacity', 'brightness', 'tint', 'color',
@@ -496,27 +494,37 @@ export default class GnomeBeautifyExtension extends Extension {
     _applyEffects() {
         const actors = [];
         if (Main.panel)
-            actors.push(['dock', Main.panel]);
-        if (Main.overview.dash?._background)
-            actors.push(['app', Main.overview.dash._background]);
+            actors.push(['dock', Main.panel, Main.layoutManager.panelBox]);
         for (const dock of this._findPersistentDocks()) {
             const background = dock.dash?._background ??
                 dock.dash?.get_children?.().find(child =>
                     child.has_style_class_name?.('dash-background'));
             if (background)
-                actors.push(['app', background]);
+                actors.push(['app', background, dock.dash]);
+        }
+        const overviewDash = Main.overview.dash;
+        if (overviewDash?._background) {
+            // ControlsManager uses a custom layout which does not allocate
+            // unknown children. Attach outside it, in overviewGroup's fixed
+            // layout, and outside Dash's redirected framebuffer as well.
+            let anchor = overviewDash;
+            const overviewGroup = Main.layoutManager.overviewGroup;
+            while (anchor.get_parent() && anchor.get_parent() !== overviewGroup &&
+                anchor.get_parent() !== Main.uiGroup)
+                anchor = anchor.get_parent();
+            actors.push(['app', overviewDash._background, anchor]);
         }
 
         const linked = this._settings.get_boolean('linked-targets');
         const activeActors = new Set();
 
-        for (const [target, actor] of actors) {
+        for (const [target, actor, anchor] of actors) {
             if (!actor || activeActors.has(actor))
                 continue;
             activeActors.add(actor);
             this._captureActor(actor);
             const prefix = target === 'app' && linked ? 'dock' : target;
-            this._applyActor(actor, prefix);
+            this._applyActor(actor, prefix, anchor);
         }
         this._pruneActors(activeActors);
     }
@@ -531,7 +539,7 @@ export default class GnomeBeautifyExtension extends Extension {
         });
     }
 
-    _applyActor(actor, prefix) {
+    _applyActor(actor, prefix, anchor) {
         this._removeBlur(actor);
         const effect = this._settings.get_string(`${prefix}-effect`);
         const original = this._originalActors.get(actor);
@@ -608,76 +616,47 @@ export default class GnomeBeautifyExtension extends Extension {
                 if (effect === 'blur')
                     brightness = Math.min(brightness, 0.92);
             }
-            if (backgroundAlpha > 0.001) {
-                if (!this._ensureBlurSurface(actor, radius, brightness, corner)) {
-                    actor.add_effect_with_name(BLUR_EFFECT_NAME, new Shell.BlurEffect({
-                        mode: Shell.BlurMode.BACKGROUND,
-                        radius,
-                        brightness,
-                    }));
-                }
-            }
+            if (backgroundAlpha > 0.001)
+                this._ensureBlurSurface(actor, anchor, radius, brightness, corner);
         }
 
-        if (effect !== 'blur' && effect !== 'glass' || backgroundAlpha <= 0.001)
+        if ((effect !== 'blur' && effect !== 'glass') || backgroundAlpha <= 0.001)
             this._removeBlurSurface(actor);
 
         actor.set_style(`${base}${details.join(';')};`);
     }
 
-    _ensureBlurSurface(actor, radius, brightness, corner) {
-        const parent = actor.get_parent?.();
-        if (!parent)
-            return false;
-
-        let surface = this._blurSurfaces.get(actor);
-        if (surface?.get_parent?.() !== parent) {
+    _ensureBlurSurface(actor, anchor, radius, brightness, corner) {
+        let layer = this._blurSurfaces.get(actor);
+        if (layer && !layer.matches(actor, anchor)) {
             this._removeBlurSurface(actor);
-            surface = null;
+            layer = null;
         }
 
-        if (!surface) {
-            surface = new St.Widget({
-                reactive: false,
-                can_focus: false,
-                clip_to_allocation: true,
-            });
-            surface.add_constraint(new Clutter.BindConstraint({
-                source: actor,
-                coordinate: Clutter.BindCoordinate.ALL,
-            }));
-            parent.insert_child_below(surface, actor);
-            this._blurSurfaces.set(actor, surface);
-        } else {
-            parent.set_child_below_sibling(surface, actor);
+        try {
+            if (!layer) {
+                layer = new BackgroundBlurLayer(actor, anchor,
+                    global.compositor.get_laters(), destroyedLayer => {
+                        if (this._blurSurfaces?.get(actor) === destroyedLayer) {
+                            this._blurSurfaces.delete(actor);
+                            this._scheduleIndicatorSync();
+                        }
+                    });
+                this._blurSurfaces.set(actor, layer);
+            }
+            layer.update(radius, brightness, corner);
+        } catch (error) {
+            this._removeBlurSurface(actor);
+            console.warn(`${this.uuid}: background blur could not attach: ${error.message}`);
         }
-
-        this._removeBlur(surface);
-        surface.set_style([
-            'background-color: rgba(0,0,0,0)',
-            `border-radius: ${corner}px`,
-            'border-width: 0px',
-            'box-shadow: none',
-        ].join(';') + ';');
-        surface.add_effect_with_name(BLUR_EFFECT_NAME, new Shell.BlurEffect({
-            mode: Shell.BlurMode.BACKGROUND,
-            radius,
-            brightness,
-        }));
-        return true;
     }
 
     _removeBlurSurface(actor) {
-        const surface = this._blurSurfaces?.get(actor);
-        if (!surface)
+        const layer = this._blurSurfaces?.get(actor);
+        if (!layer)
             return;
         this._blurSurfaces.delete(actor);
-        try {
-            this._removeBlur(surface);
-            surface.destroy();
-        } catch (error) {
-            console.debug(`${this.uuid}: blur surface already unavailable: ${error.message}`);
-        }
+        layer.destroy();
     }
 
     _pruneActors(activeActors) {

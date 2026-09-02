@@ -566,7 +566,7 @@ export default class GnomeBeautifyPreferences extends ExtensionPreferences {
         page.add(heroGroup);
 
         const info = new Adw.PreferencesGroup();
-        info.add(this._infoRow(_('版本'), '1.0.6'));
+        info.add(this._infoRow(_('版本'), '1.0.7'));
         info.add(this._infoRow(_('作者'), 'Real April'));
         const emailRow = new Adw.ActionRow({title: _('邮箱')});
         emailRow.add_suffix(new Gtk.LinkButton({

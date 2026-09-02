@@ -20,7 +20,7 @@ GNOME Shell 46–51。扩展仅面向 GNOME 46 及以上版本。
 ## 安装
 
 ```bash
-gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.6.zip --force
+gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.7.zip --force
 ```
 
 注销并重新登录后启用：
@@ -28,6 +28,18 @@ gnome-extensions install gnome-beautify@yyyreal.github.com-v1.0.6.zip --force
 ```bash
 gnome-extensions enable gnome-beautify@yyyreal.github.com
 ```
+
+## 1.0.7 修复与验证
+
+- 模糊背景层不再插入顶部栏的纵向布局，避免额外增加一行。
+- 采样层移到 Dash 的离屏渲染区域外；Ubuntu 自带 Dock 的采样层保留在滑动、裁剪容器内。
+- 仅绘制层跟随背景的位置、尺寸、缩放和显隐，包装容器固定为零尺寸，不复制目标的布局请求。
+- 打包前运行 `node --experimental-vm-modules --test tests/blur-surface.test.mjs`。
+
+自动测试覆盖 Actor 层级、零占位、坐标换算、半径/联动/延迟应用、显隐和销毁清理，
+不等同于 GNOME 的 GPU 渲染测试。实机检查时，使用有细节的壁纸，透明度设为 60%，
+分别将模糊与磨砂半径从 0 调到 60，停止调整后等待设置的应用延迟；检查顶部没有多出
+横条，应用程序栏图标仍清晰，并检查隐藏、重新显示及禁用扩展后的恢复情况。
 
 ## 作者
 

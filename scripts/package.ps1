@@ -9,12 +9,16 @@ $metadata = Get-Content -Raw -LiteralPath $metadataPath | ConvertFrom-Json
 $uuid = [string]$metadata.uuid
 $version = [string]$metadata.'version-name'
 
+node --experimental-vm-modules --test (Join-Path $projectRoot 'tests\blur-surface.test.mjs')
+if ($LASTEXITCODE -ne 0) { throw '背景模糊回归测试失败，已停止打包。' }
+
 if ([string]::IsNullOrWhiteSpace($uuid) -or $uuid -notmatch '^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$') {
     throw 'metadata.json 中的 uuid 无效。'
 }
 
 $requiredFiles = @(
     'extension.js',
+    'blurSurface.js',
     'prefs.js',
     'i18n.js',
     'metadata.json',
@@ -70,6 +74,8 @@ if ($schemaCompiler) {
 
 node --check (Join-Path $stagePath 'extension.js')
 if ($LASTEXITCODE -ne 0) { throw 'extension.js 语法检查失败。' }
+node --check (Join-Path $stagePath 'blurSurface.js')
+if ($LASTEXITCODE -ne 0) { throw 'blurSurface.js 语法检查失败。' }
 node --check (Join-Path $stagePath 'prefs.js')
 if ($LASTEXITCODE -ne 0) { throw 'prefs.js 语法检查失败。' }
 node --check (Join-Path $stagePath 'i18n.js')
