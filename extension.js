@@ -1,3 +1,4 @@
+import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
@@ -31,6 +32,7 @@ export default class GnomeBeautifyExtension extends Extension {
         }
         this._ = getTranslator(this._settings);
         this._originalActors = new Map();
+        this._blurSurfaces = new Map();
         this._applySource = 0;
         this._animationSource = 0;
         this._settingsChangedId = this._settings.connect('changed',
@@ -44,6 +46,16 @@ export default class GnomeBeautifyExtension extends Extension {
             'extension-state-changed', () => this._scheduleIndicatorSync());
         this._monitorsChangedId = Main.layoutManager.connect(
             'monitors-changed', () => this._scheduleIndicatorSync());
+        this._uiGroupSignalIds = [];
+        if (Main.uiGroup) {
+            const onUiGroupChanged = (_container, child) => {
+                if (child?.get_name?.() === 'dashtodockContainer')
+                    this._scheduleIndicatorSync();
+            };
+            this._uiGroupSignalIds.push(
+                Main.uiGroup.connect('child-added', onUiGroupChanged),
+                Main.uiGroup.connect('child-removed', onUiGroupChanged));
+        }
         this._indicatorSyncSource = 0;
 
         this._interfaceSettings = new Gio.Settings({
@@ -90,6 +102,9 @@ export default class GnomeBeautifyExtension extends Extension {
         if (this._monitorsChangedId)
             Main.layoutManager.disconnect(this._monitorsChangedId);
         this._monitorsChangedId = 0;
+        for (const signalId of this._uiGroupSignalIds ?? [])
+            Main.uiGroup.disconnect(signalId);
+        this._uiGroupSignalIds = null;
         if (this._indicatorSyncSource) {
             GLib.Source.remove(this._indicatorSyncSource);
             this._indicatorSyncSource = 0;
@@ -112,6 +127,7 @@ export default class GnomeBeautifyExtension extends Extension {
         this._destroyIndicator();
         this._restoreActors();
         this._originalActors = null;
+        this._blurSurfaces = null;
         this._settings = null;
         this._ = null;
     }
@@ -234,11 +250,12 @@ export default class GnomeBeautifyExtension extends Extension {
             GLib.PRIORITY_DEFAULT, delay, () => {
                 this._indicatorSyncSource = 0;
                 this._syncIndicator();
+                this._applyEffects();
                 return GLib.SOURCE_REMOVE;
             });
     }
 
-    _findDockTarget() {
+    _findPersistentDocks() {
         const persistentDocks = [];
         const pending = [global.stage];
         while (pending.length > 0) {
@@ -252,7 +269,11 @@ export default class GnomeBeautifyExtension extends Extension {
                 console.debug(`${this.uuid}: unavailable dock actor: ${error.message}`);
             }
         }
+        return persistentDocks;
+    }
 
+    _findDockTarget() {
+        const persistentDocks = this._findPersistentDocks();
         const primaryIndex = Main.layoutManager.primaryIndex;
         const persistentDock = persistentDocks.find(dock => dock.isMain) ??
             persistentDocks.find(dock => dock.monitorIndex === primaryIndex) ??
@@ -324,8 +345,10 @@ export default class GnomeBeautifyExtension extends Extension {
             this._quickEffectItems = null;
             this._quickOpacitySlider = null;
             this._quickRadiusSlider = null;
-            if (!this._destroyingIndicator)
+            if (!this._destroyingIndicator) {
                 this._scheduleIndicatorSync();
+                this._scheduleApply();
+            }
         });
         this._rebuildQuickMenu();
     }
@@ -471,37 +494,49 @@ export default class GnomeBeautifyExtension extends Extension {
     }
 
     _applyEffects() {
-        const actors = [
-            ['dock', Main.panel],
-            ['app', Main.overview.dash?._background],
-        ];
+        const actors = [];
+        if (Main.panel)
+            actors.push(['dock', Main.panel]);
+        if (Main.overview.dash?._background)
+            actors.push(['app', Main.overview.dash._background]);
+        for (const dock of this._findPersistentDocks()) {
+            const background = dock.dash?._background ??
+                dock.dash?.get_children?.().find(child =>
+                    child.has_style_class_name?.('dash-background'));
+            if (background)
+                actors.push(['app', background]);
+        }
+
         const linked = this._settings.get_boolean('linked-targets');
+        const activeActors = new Set();
 
         for (const [target, actor] of actors) {
-            if (!actor)
+            if (!actor || activeActors.has(actor))
                 continue;
-            this._captureActor(target, actor);
+            activeActors.add(actor);
+            this._captureActor(actor);
             const prefix = target === 'app' && linked ? 'dock' : target;
-            this._applyActor(target, actor, prefix);
+            this._applyActor(actor, prefix);
         }
+        this._pruneActors(activeActors);
     }
 
-    _captureActor(target, actor) {
-        const current = this._originalActors.get(target);
-        if (current?.actor === actor)
+    _captureActor(actor) {
+        if (this._originalActors.has(actor))
             return;
-        this._originalActors.set(target, {
+        this._originalActors.set(actor, {
             actor,
             style: actor.get_style(),
             clipToAllocation: actor.clip_to_allocation,
         });
     }
 
-    _applyActor(target, actor, prefix) {
+    _applyActor(actor, prefix) {
         this._removeBlur(actor);
         const effect = this._settings.get_string(`${prefix}-effect`);
-        const original = this._originalActors.get(target);
+        const original = this._originalActors.get(actor);
         if (effect === 'original') {
+            this._removeBlurSurface(actor);
             actor.set_style(original?.style ?? null);
             actor.clip_to_allocation = original?.clipToAllocation ?? false;
             return;
@@ -574,15 +609,91 @@ export default class GnomeBeautifyExtension extends Extension {
                     brightness = Math.min(brightness, 0.92);
             }
             if (backgroundAlpha > 0.001) {
-                actor.add_effect_with_name(BLUR_EFFECT_NAME, new Shell.BlurEffect({
-                    mode: Shell.BlurMode.BACKGROUND,
-                    radius,
-                    brightness,
-                }));
+                if (!this._ensureBlurSurface(actor, radius, brightness, corner)) {
+                    actor.add_effect_with_name(BLUR_EFFECT_NAME, new Shell.BlurEffect({
+                        mode: Shell.BlurMode.BACKGROUND,
+                        radius,
+                        brightness,
+                    }));
+                }
             }
         }
 
+        if (effect !== 'blur' && effect !== 'glass' || backgroundAlpha <= 0.001)
+            this._removeBlurSurface(actor);
+
         actor.set_style(`${base}${details.join(';')};`);
+    }
+
+    _ensureBlurSurface(actor, radius, brightness, corner) {
+        const parent = actor.get_parent?.();
+        if (!parent)
+            return false;
+
+        let surface = this._blurSurfaces.get(actor);
+        if (surface?.get_parent?.() !== parent) {
+            this._removeBlurSurface(actor);
+            surface = null;
+        }
+
+        if (!surface) {
+            surface = new St.Widget({
+                reactive: false,
+                can_focus: false,
+                clip_to_allocation: true,
+            });
+            surface.add_constraint(new Clutter.BindConstraint({
+                source: actor,
+                coordinate: Clutter.BindCoordinate.ALL,
+            }));
+            parent.insert_child_below(surface, actor);
+            this._blurSurfaces.set(actor, surface);
+        } else {
+            parent.set_child_below_sibling(surface, actor);
+        }
+
+        this._removeBlur(surface);
+        surface.set_style([
+            'background-color: rgba(0,0,0,0)',
+            `border-radius: ${corner}px`,
+            'border-width: 0px',
+            'box-shadow: none',
+        ].join(';') + ';');
+        surface.add_effect_with_name(BLUR_EFFECT_NAME, new Shell.BlurEffect({
+            mode: Shell.BlurMode.BACKGROUND,
+            radius,
+            brightness,
+        }));
+        return true;
+    }
+
+    _removeBlurSurface(actor) {
+        const surface = this._blurSurfaces?.get(actor);
+        if (!surface)
+            return;
+        this._blurSurfaces.delete(actor);
+        try {
+            this._removeBlur(surface);
+            surface.destroy();
+        } catch (error) {
+            console.debug(`${this.uuid}: blur surface already unavailable: ${error.message}`);
+        }
+    }
+
+    _pruneActors(activeActors) {
+        for (const [actor, original] of this._originalActors) {
+            if (activeActors.has(actor))
+                continue;
+            this._removeBlurSurface(actor);
+            try {
+                this._removeBlur(actor);
+                actor.set_style(original.style ?? null);
+                actor.clip_to_allocation = original.clipToAllocation;
+            } catch (error) {
+                console.debug(`${this.uuid}: stale actor already unavailable: ${error.message}`);
+            }
+            this._originalActors.delete(actor);
+        }
     }
 
     _rgba(hex, alpha) {
@@ -613,6 +724,8 @@ export default class GnomeBeautifyExtension extends Extension {
     }
 
     _restoreActors() {
+        for (const actor of [...(this._blurSurfaces?.keys() ?? [])])
+            this._removeBlurSurface(actor);
         for (const {actor, style, clipToAllocation} of this._originalActors?.values() ?? []) {
             try {
                 this._removeBlur(actor);
